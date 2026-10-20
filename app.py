@@ -10,52 +10,29 @@ import time
 import requests
 import os
 from dotenv import load_dotenv
-import warnings
-# Suppress Google Generative AI and other FutureWarnings
-warnings.filterwarnings("ignore", category=FutureWarning, module="google.generativeai")
-warnings.filterwarnings("ignore", category=FutureWarning, module="keras.src.export.tf2onnx_lib")
-
-import google.generativeai as genai
-
-# Load environment variables
-# Load environment variables
-load_dotenv()
-
-# Set Hugging Face Hub to Offline Mode for Demo
-os.environ["HF_HUB_OFFLINE"] = "1"
-# Suppress TensorFlow Warnings
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3" 
-import logging
-logging.getLogger('tensorflow').setLevel(logging.ERROR)
-
-# --- IMPORTS for Crop Disease (Linear/Hugging Face)
-import tensorflow as tf
-import tf_keras # Use legacy Keras for .h5 model compatibility
-from tf_keras.models import load_model as load_keras_model
-from tensorflow.keras.applications.efficientnet import preprocess_input
-from PIL import Image, ImageOps
-import numpy as np
-import cv2 # For leaf detection filter
-
-# --- IMPORTS (Voice, SMS, DB) ---
-from streamlit_mic_recorder import mic_recorder
-import speech_recognition as sr
 import io
-from twilio.rest import Client
-import pymongo
-from streamlit_js_eval import streamlit_js_eval
-from streamlit_option_menu import option_menu
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
 
-# --- MODEL LOADING (Hugging Face - Offline) ---
-@st.cache_resource
+from streamlit_js_eval import streamlit_js_eval
+from PIL import Image, ImageOps
+import cv2
+import torch
+
+# Project modules (kept separate so identifiers/model classes stay stable)
+from disease_model import load_resnet9, predict_torch, CLASS_LABELS, WEIGHTS_FILE
+from weather_openmeteo import (DISTRICT_COORDS, get_current_weather, get_forecast,
+                               weather_code_info, farm_advice)
+from groq_assistant import chat_completion, get_groq_key
+import dam_market
+
+@st.cache_resource(show_spinner=False)
 def load_plant_model():
-    model_path = "./plant_disease_model/plant_disease_efficientnetb4.h5"
+    """Load the pretrained PyTorch ResNet9 once per session (no retraining)."""
     try:
-        # Load from local .h5 file directly (Keras format)
-        model = load_keras_model(model_path)
-        return model
+        return load_resnet9(WEIGHTS_FILE)
     except Exception as e:
-        st.error(f"Critical Error Loading Model: {e}")
+        print(f"Disease model load error: {e}")
         return None
 
 def is_likely_leaf(img_pil):
@@ -112,13 +89,18 @@ def is_likely_leaf(img_pil):
 # 1. APP CONFIGURATION & STYLING
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Agri-Smart BD | এআই মূল্য পূর্বাভাস",
+    page_title="Smart Krishi Buddhimotta | স্মার্ট কৃষি বুদ্ধিমত্তা",
     page_icon="assets/favicon.png",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- HIDE STREAMLIT STYLE (PWA Fix) ---
+# Bengali-first typography (Hind Siliguri with safe fallbacks)
+st.markdown("""
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&display=swap" rel="stylesheet">
+""", unsafe_allow_html=True)
 hide_st_style = """
             <style>
             #MainMenu {visibility: hidden;}
@@ -350,62 +332,10 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 2. DATABASE CONNECTION (MONGODB)
+# 2. DATA LOADING (bundled dataset is SAMPLE data — never shown as live prices)
 # -----------------------------------------------------------------------------
-# NOTE: Replace this URI with your actual MongoDB Connection String
-# Example: "mongodb+srv://<username>:<password>@cluster0.xyz.mongodb.net/?retryWrites=true&w=majority"
-# For Hackathon demo without setup, I will use a local list fallback if connection fails.
 
-MONGO_URI = st.secrets.get("MONGO_URI") or os.getenv("MONGO_URI") or "mongodb+srv://admin:admin123@cluster0.xyz.mongodb.net/?retryWrites=true&w=majority" 
-
-@st.cache_resource
-def init_connection():
-    try:
-        # Connect to MongoDB
-        # client = pymongo.MongoClient(MONGO_URI) # Uncomment this when you have real URI
-        # return client
-        return None # Returning None for demo purpose (In-memory mock)
-    except:
-        return None
-
-client = init_connection()
-
-# Mock Database for Demo (If MongoDB is not connected)
-# Use cache_resource to persist across reruns
-@st.cache_resource
-def get_mock_db():
-    return []
-
-mock_db = get_mock_db()
-
-def get_user(phone):
-    """Fetch user from DB"""
-    # Real Mongo Implementation:
-    # db = client.agri_smart
-    # return db.users.find_one({"phone": phone})
-    
-    # Mock Implementation:
-    for user in mock_db:
-        if user['phone'] == phone:
-            return user
-    return None
-
-def create_user(name, phone, district):
-    """Insert new user to DB"""
-    user_data = {"name": name, "phone": phone, "district": district}
-    
-    # Real Mongo Implementation:
-    # db = client.agri_smart
-    # db.users.insert_one(user_data)
-    
-    # Mock Implementation:
-    mock_db.append(user_data)
-    return True
-
-# -----------------------------------------------------------------------------
-# 3. DATA LOADING FUNCTIONS
-# -----------------------------------------------------------------------------
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_data():
     try:
         price_df = pd.read_csv('bd_crop_price_data.csv')
@@ -418,137 +348,12 @@ def load_data():
 
 price_df, prod_df, soil_df = load_data()
 
-# --- Weather API Helper ---
-@st.cache_data(ttl=3600)
-def get_weather_data(city, api_key):
-    """Fetch current weather for a city in Bangladesh"""
-    if not api_key: return None
-    
-    # Mapping for OpenWeatherMap (Spelling differences)
-    API_CITY_MAPPING = {
-        'Cumilla': 'Comilla',
-        'Chattogram': 'Chittagong',
-        'Barishal': 'Barisal',
-        'Jashore': 'Jessore',
-        'Bogura': 'Bogra'
-    }
-    
-    search_city = API_CITY_MAPPING.get(city, city)
-    
-    try:
-        # Append ,BD to ensure we get the city in Bangladesh
-        url = f"http://api.openweathermap.org/data/2.5/weather?q={search_city},BD&appid={api_key}&units=metric"
-        # print(f"weather url-{url}")
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            return response.json()
-        return None
-    except Exception as e:
-        return None
-
-        return None
-    except Exception as e:
-        return None
-
-@st.cache_data(ttl=3600)
-def get_weather_forecast(city, api_key):
-    """Fetch 5-day weather forecast"""
-    if not api_key: return None
-    
-    API_CITY_MAPPING = {
-        'Cumilla': 'Comilla', 'Chattogram': 'Chittagong', 'Barishal': 'Barisal',
-        'Jashore': 'Jessore', 'Bogura': 'Bogra'
-    }
-    search_city = API_CITY_MAPPING.get(city, city)
-    
-    try:
-        url = f"http://api.openweathermap.org/data/2.5/forecast?q={search_city},BD&appid={api_key}&units=metric"
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            return response.json()
-        return None
-    except Exception:
-        return None
-
-# --- WEATHER & FORECAST HELPERS (COORDINATES BASED) ---
-@st.cache_data(ttl=3600)
-def get_weather_by_coords(lat, lon, api_key):
-    """Fetch current weather using Pin-Point Coordinates"""
-    try:
-        url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={api_key}&units=metric"
-        response = requests.get(url, timeout=5)
-        return response.json() if response.status_code == 200 else None
-    except:
-        return None
-
-@st.cache_data(ttl=3600)
-def get_forecast_by_coords(lat, lon, api_key):
-    """Fetch 5-day forecast to check rain probability for tomorrow"""
-    try:
-        url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={api_key}&units=metric"
-        response = requests.get(url, timeout=5)
-        return response.json() if response.status_code == 200 else None
-    except:
-        return None
-
-# --- Gemini API Helper ---
-def get_gemini_analysis(image, predicted_class, confidence, api_key):
-    """
-    Get second opinion from Gemini Flash model.
-    """
-    import time
-    
-    # Retry configuration
-    max_retries = 3
-    retry_delay = 2  # seconds
-
-    try:
-        genai.configure(api_key=api_key)
-        # Using specific model that is generally available
-        # If this fails, user might need to check Google AI Studio for enabled models
-        model = genai.GenerativeModel('gemini-2.5-flash') 
-        
-        prompt = f"""
-        You are an agricultural expert. I have uploaded an image of a crop leaf.
-        My automated model identified the disease as: '{predicted_class}' with {confidence:.1f}% confidence.
-        
-        Task:
-        1. visually verify if the image likely matches this disease.
-        2. Briefly explain the visual symptoms visible in the image.
-        3. Suggest organic or chemical remedies suitable for Bangladesh context.
-        4. If the image doesn't look like a plant leaf, please state that.
-        
-        Output in Bengali (Bangla). Keep it concise/bullet points.
-        """
-        
-        # Retry loop for 429 errors
-        for attempt in range(max_retries):
-            try:
-                response = model.generate_content([prompt, image])
-                return response.text
-            except Exception as e:
-                error_str = str(e)
-                if "429" in error_str:
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay * (attempt + 1)) # Exponential backoff
-                        continue
-                    else:
-                        return "⚠️ সার্ভার ব্যস্ত আছে (429)। অনুগ্রহ করে একটু পরে আবার চেষ্টা করুন।"
-                elif "404" in error_str:
-                     # Fallback to older/different model if 1.5-flash fails
-                     try:
-                        fallback_model = genai.GenerativeModel('gemini-1.0-pro-vision-latest')
-                        response = fallback_model.generate_content([prompt, image])
-                        return response.text
-                     except:
-                        return f"মডেল পাওয়া যায়নি (404)। API Key চেক করুন।"
-                else:
-                    return f"Gemini Analysis Error: {error_str}"
-                    
-        return "সার্ভার রেসপন্স করছে না।"
-
-    except Exception as e:
-        return f"Gemini Setup Error: {str(e)}"
+SAMPLE_DATA_NOTICE = (
+    "⚠️ **নমুনা ডেটা (ডেমো):** এই খাতের দামগুলো একটি সংকলিত নমুনা ডেটাসেট থেকে নেওয়া "
+    "এবং এগুলো **আজকের বাস্তব বাজারদর নয়**। প্রতিটি পর্যবেক্ষণের তারিখ উল্লেখ করা আছে। "
+    "বাস্তব দামের জন্য কৃষি সম্প্রসারণ অধিদপ্তর (ডিএই) বা স্থানীয় বাজার কর্তৃপক্ষের কাছ থেকে "
+    "তথ্য নিয়ে CSV হিসেবে আপলোড করুন।"
+)
 
 # Dictionaries (Translation)
 district_translation = {
@@ -928,6 +733,11 @@ CROP_PRESCRIPTION_MAP = {
 
 
 # Fallback Generic Remedies
+CROP_BN_DISPLAY = {
+    "Alu": "আলু", "Aloo": "আলু", "Tomato": "টমেটো", "Corn": "ভুট্টা", "Maize": "ভুট্টা",
+    "Grapes": "আঙুর", "Apple": "সেব", "Pear": "নাশপাতি", "Bell pepper": "ক্যাপসিকাম",
+    "Cherry": "চেরি", "Peach": "পীচ", "Potato": "আলু", "Strawberry": "স্ট্রবেরি",
+}
 GENERIC_REMEDIES = {
     'healthy': "আপনার ফসল সুস্থ ও সবল আছে। নিয়মিত পরিচর্যা ও পর্যবেক্ষণ চালিয়ে যান।",
     'fungal': "ম্যানকোজেব জাতীয় ছত্রাকনাশক (যেমন: Dithane M-45) ২ গ্রাম/লিটার হারে স্প্রে করুন।",
@@ -1138,67 +948,9 @@ def to_bengali_number(number):
     return ''.join(bengali_digits.get(char, char) for char in str(number))
 
 # -----------------------------------------------------------------------------
-# 4. AUTHENTICATION LOGIC (TOP RIGHT)
+# 4. (Removed) Mock login system — it was in-memory only and gave a false
+#    sense of security, so it has been taken out per an honest-UI policy.
 # -----------------------------------------------------------------------------
-if 'user' not in st.session_state:
-    st.session_state.user = None
-
-# Create a Top Bar Layout
-col_logo, col_auth = st.columns([3, 1])
-
-with col_logo:
-    st.title("🌾 Agri-Smart BD")
-
-# Auth UI Logic
-with col_auth:
-    if st.session_state.user:
-        # If Logged In
-        st.markdown(f"👤 **{st.session_state.user['name']}**")
-        if st.button("Logout"):
-            st.session_state.user = None
-            st.rerun()
-    else:
-        # If Not Logged In
-        with st.popover("🔐 Login / Sign Up"):
-            tab1, tab2 = st.tabs(["Login", "Sign Up"])
-            
-            with tab1:
-                st.subheader("লগইন করুন")
-                login_phone = st.text_input("মোবাইল নম্বর", key="login_phone")
-                if st.button("Login", type="primary"):
-                    user = get_user(login_phone)
-                    if user:
-                        st.session_state.user = user
-                        st.success("লগইন সফল!")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("নম্বরটি নিবন্ধিত নয়। অনুগ্রহ করে সাইন আপ করুন।")
-            
-            with tab2:
-                st.subheader("নিবন্ধন করুন")
-                reg_name = st.text_input("নাম")
-                reg_phone = st.text_input("মোবাইল নম্বর", key="reg_phone")
-                
-                # District List
-                district_list = sorted(price_df['District_Name'].unique())
-                district_display = {dist: translate_bn(dist, district_translation) for dist in district_list}
-                reg_district_bn = st.selectbox("জেলা নির্বাচন করুন", options=list(district_display.values()))
-                reg_district = [k for k, v in district_display.items() if v == reg_district_bn][0]
-                
-                if st.button("Sign Up", type="primary"):
-                    if reg_name and reg_phone:
-                        existing = get_user(reg_phone)
-                        if existing:
-                            st.warning("এই নম্বরটি ইতিমধ্যে নিবন্ধিত।")
-                        else:
-                            create_user(reg_name, reg_phone, reg_district)
-                            st.session_state.user = {"name": reg_name, "phone": reg_phone, "district": reg_district}
-                            st.success("নিবন্ধন সফল!")
-                            time.sleep(1)
-                            st.rerun()
-                    else:
-                        st.warning("সব তথ্য পূরণ করুন।")
 
 # -----------------------------------------------------------------------------
 # 5. MAIN APP CONTENT (Protected or Public)
@@ -1206,12 +958,18 @@ with col_auth:
 # You can choose to hide the whole app if not logged in, or just show it.
 # For this request, I will show the app but personalize it if logged in.
 
+# Legacy login was removed (in-memory mock); keep key defined so old code paths are safe.
+if 'user' not in st.session_state:
+    st.session_state.user = None
+
 if price_df is None:
     st.error("🚨 ডেটাসেট পাওয়া যায়নি!")
     st.stop()
 
 # Helpers
 def voice_to_text(audio_bytes):
+    return None  # voice input removed with mic recorder
+
     r = sr.Recognizer()
     try:
         audio_file = sr.AudioFile(io.BytesIO(audio_bytes))
@@ -1222,20 +980,8 @@ def voice_to_text(audio_bytes):
     except:
         return None
 
-def send_sms_alert(to_number, message_body):
-    try:
-        account_sid = st.secrets.get("TWILIO_ACCOUNT_SID") or os.getenv("TWILIO_ACCOUNT_SID")
-        auth_token = st.secrets.get("TWILIO_AUTH_TOKEN") or os.getenv("TWILIO_AUTH_TOKEN")
-        from_number = st.secrets.get("TWILIO_PHONE_NUMBER") or os.getenv("TWILIO_PHONE_NUMBER")
-        
-        if not all([account_sid, auth_token, from_number]):
-            return False, "Twilio credentials not configured"
-        
-        client = Client(account_sid, auth_token)
-        message = client.messages.create(body=message_body, from_=from_number, to=to_number)
-        return True, message.sid
-    except Exception as e:
-        return False, str(e)
+# (Removed) send_sms_alert / Twilio integration — required paid credentials and
+# was non-functional in the free setup.
 
 def get_market_insights(df, current_district, current_crop, days_ahead=7):
     # (Same simplified logic as before)
@@ -1281,6 +1027,13 @@ def predict_next_30_days(district, crop, _df):
     filtered_df = _df[(_df['District_Name'] == district) & (_df['Crop_Name'] == crop)].sort_values('Price_Date')
     
     if len(filtered_df) < 10:
+        return None, None, None
+
+    # Honesty guard: bundled dataset is sample data and forecasts are
+    # experimental — results must always be labelled as such by the caller.
+    last_obs = filtered_df['Price_Date'].max()
+    if (datetime.datetime.now() - last_obs.to_pydatetime()).days > 120:
+        # Too old to present even as an experimental projection
         return None, None, None
 
     # Feature Engineering
@@ -1440,8 +1193,8 @@ def get_crop_reasoning(soil_record, crop, yield_val):
 
 # --- Top Menu (Mobile Optimized) ---
 # --- Menu Constants ---
-MENU_OPTIONS = ["📊 মূল্য পূর্বাভাস (এআই)", "💰 সেরা বাজার খুঁজুন", "🌱 মাটি ও ফসল পরামর্শদাতা", "🦠 ফসল বিষাক্তি পরিচিতি", "📊 এগ্রি-ফাইন্যান্স ও লাভ রিপোর্ট"]
-MENU_ICONS = ["graph-up-arrow", "shop", "flower1", "bug", "cash-coin"]
+MENU_OPTIONS = ["🏠 ড্যাশবোর্ড", "💰 আজকের বাজারদর", "📊 মূল্য পূর্বাভাস (এআই)", "🦠 ফসলের রোগ শনাক্তকরণ", "🌦️ আবহাওয়া", "🤖 কৃষি সহায়ক AI", "🌱 মাটি ও ফসল পরামর্শদাতা", "ℹ️ প্রকল্প সম্পর্কে"]
+MENU_ICONS = ["house", "shop", "graph-up-arrow", "bug", "cloud-sun", "robot", "flower1", "info-circle"]
 
 # --- State Management for Menu Sync ---
 if 'current_module' not in st.session_state:
@@ -1501,7 +1254,11 @@ def update_from_mobile(key):
     st.session_state.current_module = st.session_state[key]
 
 # --- Sidebar (Desktop) ---
-st.sidebar.markdown("**এআই চালিত কৃষি বুদ্ধিমত্তা**")
+st.sidebar.markdown(
+    "**স্মার্ট কৃষি বুদ্ধিমত্তা**  \n"
+    "*Smart Krishi Buddhimotta*  \n"
+    "🇧🇩 বাংলাদেশের কৃষকদের জন্য এআই-চালিত সহায়ক প্ল্যাটফর্ম"
+)
 # Ensure the sidebar reflects the current state (e.g. if changed from mobile)
 st.sidebar.radio(
     "মডিউল নির্বাচন করুন:", 
@@ -1540,7 +1297,7 @@ menu = st.session_state.current_module
 # -----------------------------------------------------------------------------
 # MODULE 1: AI PRICE FORECASTING
 # -----------------------------------------------------------------------------
-if menu == "📊 মূল্য পূর্বাভাস (এআই)":
+if menu == "📊 মূল্য পূর্বাভাস (এআই)" or menu == "💰 আজকের বাজারদর":
     st.markdown("### মেশিন লার্নিং ব্যবহার করে ৩০ দিনের আগাম মূল্যের পূর্বাভাস।")
     
     # --- GEOLOCATION & PIN-POINT WEATHER SECTION ---
@@ -1606,158 +1363,66 @@ if menu == "📊 মূল্য পূর্বাভাস (এআই)":
         else:
             st.session_state.selected_district_val = district_options_list[0]
 
-    # --- REAL-TIME WEATHER ALERT LOGIC ---
-    weather_api_key = st.secrets.get("WEATHER_API_KEY") or os.getenv("WEATHER_API_KEY")
-    
+    # --- REAL-TIME WEATHER ALERT (Open-Meteo, no API key needed) ---
     current_w = None
-    forecast_w = None
     location_label = ""
     is_gps = False
-    
-    # 1. Try GPS Location
-    if st.session_state.user_lat and st.session_state.user_lon and weather_api_key:
-        lat = st.session_state.user_lat
-        lon = st.session_state.user_lon
-        current_w = get_weather_by_coords(lat, lon, weather_api_key)
-        forecast_w = get_forecast_by_coords(lat, lon, weather_api_key)
-        
-        # Use city name from API if available
-        api_city = current_w.get('name') if current_w else None
-        display_city = api_city if api_city else st.session_state.detected_city
-        location_label = f"{display_city} (GPS)"
-        is_gps = True
-        
-    # 2. Fallback to Selected District
-    elif weather_api_key and 'selected_district_val' in st.session_state:
-        # Get English name
-        dist_bn = st.session_state.selected_district_val
-        # Find key by value
-        dist_eng = [k for k, v in district_display.items() if v == dist_bn]
-        if dist_eng:
-            search_city = dist_eng[0]
-            current_w = get_weather_data(search_city, weather_api_key)
-            forecast_w = get_weather_forecast(search_city, weather_api_key)
-            location_label = f"{dist_bn} (District)"
-            
-    # 3. Process & Display Weather
-    if current_w:
-        # Current Data
-        temp = current_w['main']['temp']
-        humidity = current_w['main']['humidity']
-        desc = current_w['weather'][0]['description'].title()
-        icon = current_w['weather'][0]['icon']
-            
-        # Analyze Forecast
-        rain_prob = 0
-        is_rain_likely = False
-            
-        if forecast_w:
-            for item in forecast_w['list'][:8]:
-                pop = item.get('pop', 0)
-                if pop > 0.7:
-                    is_rain_likely = True
-                    rain_prob = int(pop * 100)
-                    break
-            
-        # Generate Advisory
-        alert_color = "#4caf50" # Green
-        alert_msg = "✅ আবহাওয়া চাষাবাদের জন্য অনুকূল।"
-            
-        if is_rain_likely:
-            alert_color = "#ff4b4b" # Red
-            alert_msg = f"⚠️ **সতর্কতা:** আগামী ২৪ ঘন্টায় বৃষ্টির সম্ভাবনা {rain_prob}%। জমিতে সার বা কীটনাশক দেবেন না।"
-        elif temp > 36:
-            alert_color = "#ffa726" # Orange
-            alert_msg = "☀️ **তাপপ্রবাহ:** অতিরিক্ত তাপমাত্রা। ফসলে সেচ নিশ্চিত করুন।"
-            
-        # Extract additional details
-        feels_like = current_w['main']['feels_like']
-        wind_speed = current_w['wind']['speed']
-        pressure = current_w['main']['pressure']
 
-        # Display Card with Expanded Info
+    if st.session_state.user_lat and st.session_state.user_lon:
+        lat, lon = st.session_state.user_lat, st.session_state.user_lon
+        current_w = get_current_weather(lat, lon)
+        location_label = "আপনার অবস্থান (GPS)"
+        is_gps = True
+    elif 'selected_district_val' in st.session_state:
+        dist_bn = st.session_state.selected_district_val
+        dist_eng = [k for k, v in district_display.items() if v == dist_bn]
+        coord = DISTRICT_COORDS.get(dist_eng[0]) if dist_eng else DISTRICT_COORDS.get('Dhaka')
+        if coord:
+            current_w = get_current_weather(coord[0], coord[1])
+            location_label = f"{dist_bn}"
+
+    if current_w:
+        temp = current_w['temp'] or 0
+        humidity = current_w['humidity'] or 0
+        feels_like = current_w['feels'] or temp
+        wind_speed = current_w['wind'] or 0
+        desc_bn, icon_emoji = weather_code_info(current_w['code'])
+
+        fc_short = get_forecast(st.session_state.user_lat or DISTRICT_COORDS['Dhaka'][0],
+                                st.session_state.user_lon or DISTRICT_COORDS['Dhaka'][1], days=2)
+        rain_prob = max([(d.get('rain_prob') or 0) for d in (fc_short or [])[:2]], default=0)
+
+        alert_color = "#4caf50"
+        alert_msg = "✅ আবহাওয়া চাষাবাদের জন্য অনুকূল।"
+        if rain_prob >= 60:
+            alert_color = "#ff4b4b"
+            alert_msg = f"⚠️ **সতর্কতা:** আগামী ৪৮ ঘন্টায় বৃষ্টির সম্ভাবনা {int(rain_prob)}%। সার/কীটনাশক দেওয়া স্থগিত রাখুন।"
+        elif temp > 36:
+            alert_color = "#ffa726"
+            alert_msg = "☀️ **তাপপ্রবাহ:** অতিরিক্ত তাপমাত্রা। ফসলে সেচ নিশ্চিত করুন।"
+
         st.markdown(f"""
-        <div style="background-color: #f8f9fa; border-radius: 12px; padding: 15px; border: 1px solid #ddd; margin-bottom: 20px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
-                <div style="display: flex; align-items: center; gap: 15px;">
-                    <img src="http://openweathermap.org/img/wn/{icon}@2x.png" width="70">
+        <div style="background-color:#f8f9fa;border-radius:12px;padding:15px;border:1px solid #ddd;margin-bottom:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+                <div style="display:flex;align-items:center;gap:15px;">
+                    <span style="font-size:44px;">{icon_emoji}</span>
                     <div>
-                        <h3 style="margin: 0; color: #333;">{temp:.1f}°C</h3>
-                        <p style="margin: 0; color: #666; font-size: 14px;">{desc} | অনুভূতি: {feels_like:.1f}°C</p>
-                        <p style="margin: 0; color: #666; font-size: 13px;">💧 আর্দ্রতা: {humidity}% | 🌬️ বাতাস: {wind_speed} m/s | 🌡️ চাপ: {pressure} hPa</p>
-                        <small style="color: #888;">📍 {location_label}</small>
+                        <h3 style="margin:0;color:#333;">{temp:.1f}°C</h3>
+                        <p style="margin:0;color:#666;font-size:14px;">{desc_bn} | অনুভূতি: {feels_like:.1f}°C</p>
+                        <p style="margin:0;color:#666;font-size:13px;">💧 আর্দ্রতা: {humidity}% | 🌬️ বাতাস: {wind_speed} km/h</p>
+                        <small style="color:#888;">📍 {location_label} · উৎস: Open-Meteo</small>
                     </div>
                 </div>
-                <div style="background-color: {alert_color}; color: white; padding: 10px 20px; border-radius: 8px; margin-top: 10px; text-align: right;">
-                    {alert_msg}
-                </div>
+                <div style="background-color:{alert_color};color:white;padding:10px 20px;border-radius:8px;text-align:right;">{alert_msg}</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
-            
-        # Map (Only for GPS)
+
         if is_gps:
             st.markdown("**🗺️ আপনার জমির অবস্থান (OpenStreetMap):**")
             map_data = pd.DataFrame({'lat': [st.session_state.user_lat], 'lon': [st.session_state.user_lon]})
             st.map(map_data, zoom=12, use_container_width=True)
-            
-            # Auto-Sync GPS City to District Selection (One-time sync per GPS fetch)
-            if 'sync_done' not in st.session_state: st.session_state.sync_done = False
-            
-            # Use detected city from IP/weather data if available
-            detected_city_name = current_w.get('name', st.session_state.detected_city)
-            
-            if detected_city_name and not st.session_state.sync_done:
-                match_found_bn = None
-                
-                # Normalize for matching
-                search_name = detected_city_name.lower().strip()
-                
-                # Check 1: Direct/Case-insensitive matching with keys
-                for d_eng, d_bn in district_translation.items():
-                    if d_eng.lower() in search_name or search_name in d_eng.lower():
-                        match_found_bn = d_bn
-                        break
-                
-                # Update Session State if match found
-                if match_found_bn and 'selected_district_val' in st.session_state:
-                    if st.session_state.selected_district_val != match_found_bn:
-                        st.session_state.selected_district_val = match_found_bn
-                        st.session_state.sync_done = True # Prevent infinite loops
-                        st.toast(f"📍 জেলা স্বয়ংক্রিয়ভাবে নির্বাচিত: {match_found_bn}")
-                        time.sleep(0.5)
-                        st.rerun()
 
-
-
-    # Voice Input
-    c1, c2 = st.columns([1, 4])
-    with c1:
-        audio = mic_recorder(start_prompt="🎤 বলুন", stop_prompt="🛑 থামুন", key='recorder', format="wav", use_container_width=True)
-    
-    voice_text = ""
-    if audio:
-        with st.spinner("প্রসেস হচ্ছে..."):
-            voice_text = voice_to_text(audio['bytes'])
-        if voice_text:
-            st.success(f"🗣️ আপনি বলেছেন: **'{voice_text}'**")
-            # Check if this voice command was already processed
-            prev_text = st.session_state.get('last_voice_text', "")
-            if voice_text != prev_text:
-                updated = process_voice_command(
-                    voice_text, 
-                    district_names=district_options_list, 
-                    district_key='selected_district_val'
-                )
-                
-                st.session_state.last_voice_text = voice_text # Mark processed
-                
-                if updated:
-                    time.sleep(1)
-                    st.rerun()
-                elif not any(d in voice_text for d in district_options_list):
-                    st.toast("⚠️ কোনো জেলা পাওয়া যায়নি", icon="⚠️")
-    
     # Legacy Geolocation logic removed
 
 
@@ -1966,7 +1631,7 @@ if menu == "📊 মূল্য পূর্বাভাস (এআই)":
 # -----------------------------------------------------------------------------
 # MODULE 2: BEST MARKET FINDER
 # -----------------------------------------------------------------------------
-elif menu == "💰 সেরা বাজার খুঁজুন":
+elif menu == "__REMOVED_MARKET__":
     st.title("💰 সেরা বাজার খুঁজুন")
     st.divider()
 
@@ -1977,11 +1642,6 @@ elif menu == "💰 সেরা বাজার খুঁজুন":
     if 'target_crop_bn' not in st.session_state:
         st.session_state.target_crop_bn = list(all_crops_display.values())[0]
 
-    # Voice Input
-    c1, c2 = st.columns([1, 4])
-    with c1:
-        audio = mic_recorder(start_prompt="🎤 বলুন", stop_prompt="🛑 থামুন", key='rec_best_market', format="wav", use_container_width=True)
-    
     if audio:
         voice_text = voice_to_text(audio['bytes'])
         if voice_text:
@@ -2102,145 +1762,120 @@ elif menu == "🌱 মাটি ও ফসল পরামর্শদাতা"
         with st.expander(f"#{idx} {translate_bn(crop, crop_translation)} - ঐতিহাসিক ফলন: {to_bengali_number(f'{yield_val:.1f}')} কুইন্টাল/হেক্টর"):
             st.markdown(f"**কেন এই ফসলটি উপযুক্ত:**")
             st.write(reasoning)
-elif menu == "🦠 ফসল বিষাক্তি পরিচিতি":
-    st.title("🦠 ফসল বিষাক্তি পরিচিতি")
-    # st.markdown("Upload a photo of your crop leaf for AI analysis (99.2% accuracy on global dataset). Note: This is for guidance only—consult local agri experts for confirmation.")
+elif menu == "🦠 ফসলের রোগ শনাক্তকরণ":
+    st.title("🦠 ফসলের রোগ শনাক্তকরণ")
     st.markdown(
-    "AI বিশ্লেষণের জন্য আপনার ফসলের পাতার একটি ছবি আপলোড করুন "
-    "(গ্লোবাল ডেটাসেটে ৯৯.২% নির্ভুলতা)। "
-    "নোট: এটি শুধুমাত্র প্রাথমিক দিকনির্দেশনার জন্য—চূড়ান্ত সিদ্ধান্তের আগে "
-    "স্থানীয় কৃষি বিশেষজ্ঞের পরামর্শ নিন।"
-)
-
-
+        "AI মডেলের বিশ্লেষণের জন্য ফসলের পাতার একটি স্পষ্ট ছবি তুলুন বা আপলোড করুন। "
+        "মডেলটি **৩৮টি শ্রেণির** (আলু, টমেটো, ভুট্টা, আঙুর, পেয়ারা/জাম, মরিচ, স্ট্রবেরি ইত্যাদি) "
+        "মধ্যে থেকে রোগ শনাক্ত করে। এটি শুধু প্রাথমিক দিকনির্দেশনা — চূড়ান্ত সিদ্ধান্তে "
+        "স্থানীয় কৃষি অফিসের পরামর্শ নিন।"
+    )
 
     model = load_plant_model()
     if not model:
-        st.error("মডেল লোড হতে সমস্যা হয়েছে। ইন্টারনেট সংযোগ চেক করুন।")
-    
-    # UI Layout: Tabs for Input Method
+        st.error("রোগ শনাক্তকরণ মডেল (`plant_disease_weights.pth`) পাওয়া যায়নি বা লোড করা যায়নি। "
+                 "ফাইলটি রেপোতে আছে কিনা দেখুন (Git LFS হলে ডাউনলোড নিশ্চিত করুন)।")
+        st.stop()
+
     tab_cam, tab_up = st.tabs(["📸 ছবি তুলুন", "📂 ছবি আপলোড করুন"])
-    
+
     img_file = None
-    
     with tab_cam:
         cam_img = st.camera_input("ফসল বা পাতার ছবি তুলুন")
         if cam_img:
             img_file = cam_img
-            
     with tab_up:
-        up_img = st.file_uploader("গ্যালারি থেকে ছবি নির্বাচন করুন (JPG/PNG)", type=["jpg", "png", "jpeg"])
+        up_img = st.file_uploader("গ্যালারি থেকে ছবি নির্বাচন করুন (JPG/PNG, ≤৮MB)",
+                                  type=["jpg", "jpeg", "png"], key="disease_upload")
         if up_img:
             img_file = up_img
 
     if img_file:
-        # Display Image
-        image = Image.open(img_file)
-        
-        # Center the image
+        try:
+            file_bytes = np.asarray(bytearray(img_file.getvalue()), dtype=np.uint8)                 if hasattr(img_file, "getvalue") else None
+            image = Image.open(img_file if file_bytes is None else io.BytesIO(file_bytes))
+            image = image.convert("RGB")
+        except Exception:
+            st.error("ছবিটি পড়া যায়নি — ক্ষতিগ্রস্ত ফাইল হতে পারে। অন্য ছবি দিয়ে চেষ্টা করুন।")
+            st.stop()
+
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
-            st.image(image, caption="বিশ্লেষণকৃত ছবি", use_container_width=True)
+            st.image(image, caption="আপনার আপলোড করা ছবি", use_container_width=True)
 
-        # Step 1: Leaf Detection Filter
+        # Gentle sanity check (does not reject ordinary leaf photos)
         is_leaf, msg = is_likely_leaf(image)
         if not is_leaf:
             st.warning(msg)
-            st.info("টিপস: ছবিটি উজ্জ্বল আলোতে তুলুন এবং ব্যাকগ্রাউন্ডে যেন পাতা থাকে তা নিশ্চিত করুন।")
-            st.stop() # Stop further processing
+            st.info("টিপস: দিনের আলোতে পাতার কাছে গিয়ে স্পষ্ট ছবি তুলুন।")
 
-        with st.spinner("রোগ নির্ণয় করা হচ্ছে..."):
+        with st.spinner("রোগ নির্ণয় চলছে..."):
             try:
-                # Preprocess for (380x380)
-                # 1. Resize
-                img_resized = ImageOps.fit(image, (380, 380), Image.Resampling.LANCZOS)
-                
-                # 2. Convert to Array and Batch
-                img_array = np.asarray(img_resized)
-                img_batch = np.expand_dims(img_array, axis=0)
-                
-                # 3. Preprocess Input (Standard)
-                img_preprocessed = preprocess_input(img_batch)
-
-                # Inference
-                probs = model.predict(img_preprocessed)
-                
-                # Get Prediction
-                confidence_val = np.max(probs)
-                pred_idx = np.argmax(probs)
-                
+                img_resized = image.resize((256, 256), Image.Resampling.LANCZOS)
+                arr = np.asarray(img_resized, dtype="float32") / 255.0
+                tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
+                probs = predict_torch(model, tensor)
+                pred_idx = int(np.argmax(probs))
+                conf_score = float(probs[pred_idx] * 100)
                 pred_class = CLASS_LABELS[pred_idx]
-                conf_score = confidence_val * 100
             except Exception as e:
-                st.error(f"Inference Error: {e}")
+                st.error(f"বিশ্লেষণে সমস্যা হয়েছে: {e}")
                 st.stop()
 
-        # Display Results
         bn_label = DISEASE_TRANSLATION.get(pred_class, pred_class)
-        
+        crop_en, _, disease_en = pred_class.partition("___")
+        crop_bn = CROP_BN_DISPLAY.get(crop_en.replace("_", " ").strip(", "), crop_en)
+
         st.divider()
-        st.subheader("ফলাফল:")
-        
-        # Result Badge
-        is_healthy = "healthy" in pred_class.lower()
-        if is_healthy:
-            st.success(f"✅ **অবস্থা:** {bn_label}")
+        st.subheader("📋 ফলাফল")
+        st.markdown(f"**ফসল (মডেলের অনুমান):** {crop_bn}  \n**শনাক্ত অবস্থা:** ", unsafe_allow_html=True)
+        if "healthy" in pred_class.lower():
+            st.success(f"✅ {bn_label}")
         else:
-            st.error(f"⚠️ **শনাক্ত রোগ:** {bn_label}")
-            
-        # Confidence Bar
-        st.write(f"**সঠিকতার হার:** {conf_score:.1f}%")
-        st.progress(int(conf_score))
-        
-        # --- AI DOCTOR PRESCRIPTION (Feature 2) ---
-        st.markdown("### 💊 এআই কৃষি ডাক্তার (Digital Prescription)")
-        
+            st.error(f"⚠️ শনাক্ত রোগ: {bn_label}")
+
+        st.write(f"**আস্থা (Confidence):** {conf_score:.1f}%")
+        st.progress(min(int(conf_score), 100) / 100)
+
+        top3 = np.argsort(-probs)[:3]
+        st.caption("সম্ভাব্য তিনটি ফলাফল:")
+        for t in top3:
+            st.caption(f"– {DISEASE_TRANSLATION.get(CLASS_LABELS[t], CLASS_LABELS[t])} "
+                       f"({probs[t]*100:.1f}%)")
+
+        if conf_score < 50:
+            st.warning("🔎 মডেলের আস্থা কম। ছবিটি আবার তোলা বা বিশেষজ্ঞের পরামর্শ নেওয়া ভালো।")
+
+        st.info("🌱 **অর্থ ও পরবর্তী পদক্ষেপ:** এই ফলাফল মডেলের গাণিতিক অনুমান, নিশ্চিত রোগবিজ্ঞান নয়। "
+                "রোগ দেখা গেলে affected পাতা সরিয়ে ফেলুন, জৈব/রাসায়নিক ব্যবহারের আগে কৃষি সম্প্রসারণ "
+                "অফিস বা উপজেলা কৃষি অফিসারের সাথে যোগাযোগ করুন।")
+
+        # --- AI Doctor prescription (rule-based, from inherited map) ---
+        st.markdown("### 💊 সাধারণ করণীয় (প্রেসক্রিপশন)")
         prescription = CROP_PRESCRIPTION_MAP.get(pred_class)
-        
-        if is_healthy:
-             st.info(GENERIC_REMEDIES['healthy'])
+        if "healthy" in pred_class.lower():
+            st.info(GENERIC_REMEDIES["healthy"])
         elif prescription:
-            # Structured Prescription Card
             st.markdown(f"""
-<div style="background-color: #f1f8e9; border: 2px solid #81c784; border-radius: 10px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-<h3 style="color: #2e7d32; margin-top: 0;">📋 ব্যবস্থাপত্র (Prescription)</h3>
-<hr>
-<div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
-<div>
-<strong style="color: #e65100;">🔍 রোগের কারণ:</strong>
-<span style="color: #333;">{prescription['cause']}</span>
-</div>
-<div>
-<strong style="color: #1565c0;">🛡️ প্রতিকার/করণীয়:</strong>
-<span style="color: #333;">{prescription['solution']}</span>
-</div>
-<div>
-<strong style="color: #d32f2f;">💊 প্রস্তাবিত ঔষধ:</strong>
-<span style="font-weight: bold; color: #d32f2f; background-color: #ffebee; padding: 2px 8px; border-radius: 4px;">{prescription['medicine']}</span>
-</div>
-<div>
-<strong style="color: #43a047;">⚖️ মাত্রা (Dosage):</strong>
-<span style="color: #333;">{prescription['dosage']}</span>
-</div>
-</div>
-<div style="margin-top: 15px; font-size: 0.9em; color: #666; font-style: italic;">
-* ঔষধ ব্যবহারের পূর্বে বোতলের গায়ের নির্দেশাবলী ভালো করে পড়ুন এবং সুরক্ষা পোশাক পরিধান করুন।
-</div>
-</div>
-""", unsafe_allow_html=True)
+<div style="background-color:#f1f8e9;border:2px solid #81c784;border-radius:10px;padding:20px;">
+<h4 style="color:#2e7d32;margin-top:0;">📋 ব্যবস্থাপত্র</h4>
+<p><strong>🔍 কারণ:</strong> {prescription['cause']}</p>
+<p><strong>🛡️ প্রতিকার:</strong> {prescription['solution']}</p>
+<p><strong>💊 প্রস্তাবিত ঔষধ:</strong> {prescription['medicine']}</p>
+<p><strong>⚖️ মাত্রা:</strong> {prescription['dosage']}</p>
+<p style="font-size:.85em;color:#666;font-style:italic;">ঔষধের গায়ে লেখা নির্দেশনা মেনে সুরক্ষা পোশাক পরিধান করুন।</p>
+</div>""", unsafe_allow_html=True)
         else:
-            # Fallback for unconnected diseases
-            fallback_remedy = GENERIC_REMEDIES['bacterial'] if 'bacterial' in pred_class.lower() \
-                else (GENERIC_REMEDIES['viral'] if 'virus' in pred_class.lower() \
-                else GENERIC_REMEDIES['fungal'])
-            
-            st.warning(f"⚠️ নির্দিষ্ট প্রেসক্রিপশন ডেটাবেসে নেই। সাধারণ পরামর্শ: {fallback_remedy}")
-            
-        # Remedy Section (Legacy) removed in favor of AI Doctor
-            
-        # Disclaimer
-        with st.expander("⚠️ দাবিত্যাগ (Disclaimer)"):
-            st.write("এই এআই মডেলটি সহায়ক টুল হিসেবে তৈরি। এটি ৯৯.২% নির্ভুল হলেও, চূড়ান্ত সিদ্ধান্তের জন্য সর্বদা কৃষি বিশেষজ্ঞের পরামর্শ নিন।")
+            fallback = (GENERIC_REMEDIES['bacterial'] if 'bacterial' in pred_class.lower()
+                        else GENERIC_REMEDIES['viral'] if 'virus' in pred_class.lower()
+                        else GENERIC_REMEDIES['fungal'])
+            st.warning(f"নির্দিষ্ট পরামর্শ ডেটাবেসে নেই। সাধারণ ধারণা: {fallback}")
+
+        with st.expander("⚠️ সীাবদ্ধতা ও দাবিত্যাগ"):
+            st.markdown(
+                "- মডেলটি **New Plant Diseases Dataset (Kaggle)**-এ প্রশিক্ষিত — বাংলাদেশি সব ফসল/রোগ এতে নেই।\n"
+                "- যে ফসলের ছবি মডেল জানে না, সেটির জন্যও কোনো-একটি ফলাফল দেখাতে পারে — তাই ফসলের নাম মিলিয়ে নিন।\n"
+                "- রাসায়নিক সিদ্ধান্তের আগে কৃষি বিশেষজ্ঞের নিশ্চিত মতামত নিন।")
 
 # -----------------------------------------------------------------------------
 # MODULE 5: AGRI-FINANCE & PROFIT REPORT (Feature 3)
@@ -2375,5 +2010,158 @@ elif menu == "📊 এগ্রি-ফাইন্যান্স ও লাভ 
         with col_print:
             st.warning("🖨️ প্রিন্ট করতে 'Ctrl+P' চাপুন") 
 
+# -----------------------------------------------------------------------------
+# MODULE 6: DASHBOARD (home)
+# -----------------------------------------------------------------------------
+if menu == "🏠 ড্যাশবোর্ড":
+    st.title("🌾 Smart Krishi Buddhimotta")
+    st.caption("স্মার্ট কৃষি বুদ্ধিমত্তা — বাংলাদেশের কৃষকদের জন্য ফসলের রোগ শনাক্তকরণ, লাইভ আবহাওয়া, বাজারদর তথ্য ও AI কৃষি সহায়ক।")
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("🦠 রোগ শনাক্তকরণ", "৩৮ শ্রেণি")
+    with c2:
+        st.metric("🌦️ আবহাওয়া", "Open-Meteo লাইভ")
+    with c3:
+        st.metric("💰 বাজারদর", "DAM + নমুনা")
+    with c4:
+        st.metric("🤖 AI সহায়ক", "Groq (ফ্রি-টিয়ার)")
+
+    st.divider()
+    st.markdown(
+        "**শুরু করতে যেকোনো একটি খাত বেছে নিন:**\n\n"
+        "- 💰 **আজকের বাজারদর** — সরকারি DAM লাইভ রিপোর্ট টানার চেষ্টা করে; না পেলে স্পষ্টভাবে ‘নমুনা ডেটা’ দেখায়।\n"
+        "- 📊 **মূল্য পূর্বাভাস** — ঐতিহাসিক vs পূর্বাভাসিত গ্রাফ (পরীক্ষামূলক হিসেবে চিহ্নিত)।\n"
+        "- 🦠 **রোগ শনাক্তকরণ** — পাতার ছবি তুলুন/আপলোড করুন, মডেল রোগ, আস্থা ও করণীয় দেখাবে।\n"
+        "- 🌦️ **আবহাওয়া** — আপনার জেলার লাইভ আবহাওয়া ও ৭ দিনের পূর্বাভাস (API key লাগে না)।\n"
+        "- 🤖 **কৃষি সহায়ক AI** — বাংলায় সাধারণ কৃষি পরামর্শ (Groq key সেট করলে)।\n"
+        "- 🌱 **মাটি ও ফসল পরামর্শদাতা** — ডেটাসেট-ভিত্তিক ফসল সুপারিশ।"
+    )
+    st.info("⚠️ **গুরুত্বপূর্ণ:** অ্যাপের বান্ডেল করা দামের ডেটা নমুনা, লাইভ নয়। সব ফলাফল প্রাথমিক দিকনির্দেশনা — চূড়ান্ত সিদ্ধান্তে উপজেলা কৃষি অফিসের পরামর্শ নিন।")
+
+# -----------------------------------------------------------------------------
+# MODULE 7: WEATHER (Open-Meteo, no API key)
+# -----------------------------------------------------------------------------
+elif menu == "🌦️ আবহাওয়া":
+    st.title("🌦️ আবহাওয়া ও কৃষি পরিকল্পনা")
+    st.caption("উৎস: Open-Meteo (মডেল-ভিত্তিক পূর্বাভাস) · API key প্রয়োজন নেই")
+
+    dist_names = sorted(DISTRICT_COORDS.keys())
+    dist_display = {d: translate_bn(d, district_translation) for d in dist_names}
+    sel_bn = st.selectbox("জেলা নির্বাচন করুন", options=[dist_display[d] for d in dist_names],
+                          index=dist_names.index('Dhaka'), key="wx_district")
+    matched = [k for k, v in dist_display.items() if v == sel_bn]
+    sel_en = matched[0] if matched else 'Dhaka'
+    lat, lon = DISTRICT_COORDS[sel_en]
+
+    @st.cache_data(ttl=900, show_spinner="আবহাওয়া লোড হচ্ছে...")
+    def _wx(_lat, _lon):
+        return get_current_weather(_lat, _lon), get_forecast(_lat, _lon, days=7)
+
+    cur_wx, fc = _wx(round(lat, 3), round(lon, 3))
+
+    if cur_wx is None and fc is None:
+        st.error("☁️ আবহাওয়া সেবা এখন পাওয়া যাচ্ছে না। ইন্টারনেট সংযোগ পরীক্ষা করে কিছুক্ষণ পর আবার চেষ্টা করুন।")
+    else:
+        if cur_wx:
+            desc, icon = weather_code_info(cur_wx["code"])
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric(f"{icon} তাপমাত্রা", f'{cur_wx["temp"]}°C', help=f'অনুভূত: {cur_wx["feels"]}°C · {desc}')
+            m2.metric("💧 আর্দ্রতা", f'{cur_wx["humidity"]}%')
+            m3.metric("🌬️ বাতাস", f'{cur_wx["wind"]} km/h')
+            m4.metric("🌧️ বৃষ্টি (এখন)", f'{cur_wx["rain_mm"]} mm')
+            st.caption(f"সর্বশেষ আপডেট: {cur_wx['time']} (Asia/Dhaka) · অবস্থান: {sel_bn} ({lat}, {lon})")
+        if fc:
+            st.subheader("📅 আগামী ৭ দিনের পূর্বাভাস")
+            fdf = pd.DataFrame(fc)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=fdf["date"], y=fdf["tmax"], name="সর্বোচ্চ °C", mode="lines+markers", line=dict(color="#e76f51")))
+            fig.add_trace(go.Scatter(x=fdf["date"], y=fdf["tmin"], name="সর্বনিম্ন °C", mode="lines+markers", line=dict(color="#2a9d8f")))
+            fig.add_bar(x=fdf["date"], y=fdf["rain_prob"], name="বৃষ্টির সম্ভাবনা %", marker_color="#264653", opacity=0.35, yaxis="y2")
+            fig.update_layout(height=380, margin=dict(t=10, b=10), legend=dict(orientation="h"),
+                              yaxis2=dict(title="%", overlaying="y", side="right", range=[0, 100]))
+            st.plotly_chart(fig, use_container_width=True)
+            with st.expander("🗂️ বিস্তারিত তালিকা"):
+                show = fdf.copy()
+                show["cond"] = [weather_code_info(c)[0] for c in show["code"]]
+                st.dataframe(
+                    show[["date", "cond", "tmax", "tmin", "rain_mm", "rain_prob", "wind"]]
+                    .rename(columns={"date": "তারিখ", "cond": "আবহাওয়া", "tmax": "সর্বোচ্চ °C",
+                                     "tmin": "সর্বনিম্ন °C", "rain_mm": "বৃষ্টি (মিমি)",
+                                     "rain_prob": "সম্ভাবনা %", "wind": "বাতাস (km/h)"}),
+                    use_container_width=True, hide_index=True)
+        st.subheader("🚜 কৃষি পরিকল্পনা পরামর্শ")
+        for tip in farm_advice(cur_wx, fc):
+            st.markdown(f"- {tip}")
+        st.caption("ℹ️ পরামর্শগুলো শুধু উপরের প্রকৃত পূর্বাভাস-চলক থেকে তৈরি; এটি AI-generated নয় এবং নিশ্চিত পূর্বাভাস নয়।")
+
+# -----------------------------------------------------------------------------
+# MODULE 8: AI ASSISTANT (Groq)
+# -----------------------------------------------------------------------------
+elif menu == "🤖 কৃষি সহায়ক AI":
+    st.title("🤖 কৃষি সহায়ক AI")
+    st.caption("সাধারণ কৃষি পরামর্শ · চালিকাশক্তি: Groq (Llama-3.3-70B) · উত্তর সাধারণ জ্ঞানভিত্তিক, লাইভ ডেটা নয়")
+
+    if not get_groq_key():
+        st.warning(
+            "⚙️ **AI সহায়ক এখন নিষ্ক্রিয়** — GROQ_API_KEY পাওয়া যায়নি।\n\n"
+            "1. [console.groq.com](https://console.groq.com)-এ ফ্রি অ্যাকাউন্ট খুলে API key নিন।\n"
+            "2. স্থানীয়ভাবে `.streamlit/secrets.toml`-এ যোগ করুন: `GROQ_API_KEY=\"your_key\"`\n"
+            "3. Streamlit Cloud-এ Settings → Secrets-এ একই key বসান।\n\n"
+            "কী ছাড়াও অ্যাপের বাকি সব ফিচার স্বাভাবিক চলবে।"
+        )
+
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    prompt = st.chat_input("কৃষি সম্পর্কে প্রশ্ন করুন (বাংলা বা English)...")
+    if prompt:
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        with st.chat_message("assistant"):
+            with st.spinner("চিন্তা করছে..."):
+                reply, err = chat_completion(
+                    [{"role": m["role"], "content": m["content"]}
+                     for m in st.session_state.chat_history[-8:]])
+            shown = err if err else reply
+            st.markdown(shown)
+            st.session_state.chat_history.append({"role": "assistant", "content": shown})
+        st.session_state.chat_history = st.session_state.chat_history[-20:]
+
+# -----------------------------------------------------------------------------
+# MODULE 9: ABOUT
+# -----------------------------------------------------------------------------
+elif menu == "ℹ️ প্রকল্প সম্পর্কে":
+    st.title("ℹ️ প্রকল্প সম্পর্কে")
+    st.markdown("""
+### Smart Krishi Buddhimotta (স্মার্ট কৃষি বুদ্ধিমত্তা)
+বাংলাদেশের কৃষকদের জন্য একটি উন্মুক্ত, বাংলা-প্রধান কৃষি-বুদ্ধিমত্তা প্ল্যাটফর্ম:
+ফসলের রোগ শনাক্তকরণ, লাইভ আবহাওয়া, বাজারদর তথ্য ও AI কৃষি সহায়ক — একটি পরিচ্ছন্ন,
+মোবাইল-বান্ধব ইন্টারফেসে।
+
+### কৃতজ্ঞতা ও উৎস (Attribution)
+- এটি **Agri-Smart BD** (NawrizTurjo/Agri-Smart-BD, MIT license) প্রকল্পের **অ্যাডাপ্টেড ও উন্নত সংস্করণ**।
+- রোগ শনাক্তকরণ: ResNet9, **New Plant Diseases Dataset** (Kaggle: vipoooool/new-plant-diseases-dataset; মূল PlantVillage ডেটা) — মূল notebook-এর সংরক্ষিত ওয়েট পুনর্ব্যবহৃত, পুনঃপ্রশিক্ষণ করা হয়নি।
+- আবহাওয়া: [Open-Meteo.com](https://open-meteo.com) (CC-BY 4.0)।
+- AI চ্যাট: [Groq](https://groq.com) — Llama-3.3-70B (ফ্রি-টিয়ার)।
+- বাজারদর: কৃষি মার্কেট বিভাগ (DAM) market.dam.gov.bd লাইভ রিপোর্ট; বান্ডেল করা CSV **নমুনা ডেটা**।
+
+### সীাবদ্ধতা
+- বান্ডেল করা দামের ডেটা বাস্তব পর্যবেক্ষণ নয়; যেসব মূল্য-পূর্বাভাস দেখানো হয় সেগুলো **পরীক্ষামূলক**।
+- রোগ মডেল কেবল তার ৩৮টি প্রশিক্ষিত শ্রেণিতে কাজ করে; অন্য ফসলের ছবি ভুল ফলাফল দিতে পারে।
+- AI উত্তর সাধারণ জ্ঞানভিত্তিক; রোগ/ওষুধের চূড়ান্ত সিদ্ধান্তে উপজেলা কৃষি অফিসারের পরামর্শ নিন।
+""")
+    st.caption("🌾 Free & open-source · Streamlit + PyTorch + Open-Meteo + Groq")
+
 # Footer
-st.markdown("<br><hr><div style='text-align: center; color: #555;'>Agri-Smart BD | Built for AI Build-a-thon 2025</div>", unsafe_allow_html=True)
+st.markdown(
+    "<br><hr><div style='text-align:center;color:#555;font-size:0.9rem;'>"
+    "🌾 <b>Smart Krishi Buddhimotta</b> (স্মার্ট কৃষি বুদ্ধিমত্তা) — Agri-Smart BD-এর "
+    "রূপান্তরিত ও উন্নত সংস্করণ। আবহাওয়া: Open-Meteo · AI: Groq · "
+    "রোগ মডেল: Kaggle New Plant Diseases Dataset (ResNet9)।"
+    "</div>", unsafe_allow_html=True)
