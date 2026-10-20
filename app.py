@@ -9,7 +9,6 @@ import datetime
 import time
 import requests
 import os
-from dotenv import load_dotenv
 import io
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -25,6 +24,7 @@ from weather_openmeteo import (DISTRICT_COORDS, get_current_weather, get_forecas
                                weather_code_info, farm_advice)
 from groq_assistant import chat_completion, get_groq_key
 import dam_market
+from streamlit_option_menu import option_menu
 
 @st.cache_resource(show_spinner=False)
 def load_plant_model():
@@ -967,19 +967,6 @@ if price_df is None:
     st.stop()
 
 # Helpers
-def voice_to_text(audio_bytes):
-    return None  # voice input removed with mic recorder
-
-    r = sr.Recognizer()
-    try:
-        audio_file = sr.AudioFile(io.BytesIO(audio_bytes))
-        with audio_file as source:
-            audio_data = r.record(source)
-        text = r.recognize_google(audio_data, language='bn-BD')
-        return text
-    except:
-        return None
-
 # (Removed) send_sms_alert / Twilio integration — required paid credentials and
 # was non-functional in the free setup.
 
@@ -1204,52 +1191,6 @@ def update_from_sidebar():
     st.session_state.current_module = st.session_state.nav_sidebar
 
 
-def process_voice_command(voice_text, district_names=None, crop_names=None, district_key=None, crop_key=None):
-    """
-    Process voice text to find district and crop names.
-    Updates session state keys if matches are found.
-    Returns: True if any update occurred, False otherwise.
-    """
-    if not voice_text: return False
-    
-    updated = False
-    
-    # Check for District
-    if district_names and district_key:
-        found_dist = None
-        # Try finding exact match first, then partial
-        for dist_bn in district_names:
-            if dist_bn in voice_text:
-                found_dist = dist_bn
-                break
-        
-        if found_dist:
-            # Only update if different
-            current_val = st.session_state.get(district_key)
-            if current_val != found_dist:
-                st.session_state[district_key] = found_dist
-                st.toast(f"✅ জেলা শনাক্ত হয়েছে: {found_dist}")
-                updated = True
-    
-    # Check for Crop
-    if crop_names and crop_key:
-        found_crop = None
-        for crop_bn in crop_names:
-            if crop_bn in voice_text:
-                found_crop = crop_bn
-                break
-        
-        if found_crop:
-            current_val = st.session_state.get(crop_key)
-            # Find the option that matches this crop name (since selectbox might use format_func, but key stores the value)
-            # Assuming the key stores the Bengali name directly for these specific selectboxes as per app structure
-            if current_val != found_crop:
-                 st.session_state[crop_key] = found_crop
-                 st.toast(f"✅ ফসল শনাক্ত হয়েছে: {found_crop}")
-                 updated = True
-
-    return updated
-    
 def update_from_mobile(key):
     st.session_state.current_module = st.session_state[key]
 
@@ -1295,9 +1236,94 @@ with st.expander("☰ মেনু নির্বাচন (Menu)", expanded=Fa
 menu = st.session_state.current_module
 
 # -----------------------------------------------------------------------------
+# MODULE 0: আজকের বাজারদর (DAM live prices + manual CSV import)
+# -----------------------------------------------------------------------------
+if menu == "💰 আজকের বাজারদর":
+    st.title("💰 আজকের বাজারদর")
+
+    import datetime as _dtm
+
+    GROUPS_BN = {"Foodgrains": "খাদ্যশস্য", "Pulses": "ডাল/সাগ", "Vegetable": "সবজি",
+                 "Fruit": "ফল", "Spices": "মসলা", "Dal": "ডাল", "Oil Seed": "তেলবীজ"}
+
+    @st.cache_data(ttl=1800, show_spinner="ডিএএম (DAM) ওয়েবসাইট থেকে লাইভ রিপোর্ট আনা হচ্ছে...")
+    def _fetch_dam(group_label, d_from, d_to):
+        try:
+            return dam_market.fetch_dam_prices(group_label, d_from, d_to), None
+        except dam_market.DamError as e:
+            return None, str(e)
+
+    c_g, c_d1, c_d2 = st.columns([2, 1, 1])
+    with c_g:
+        grp_bn = st.selectbox("পণ্যের খাত", list(GROUPS_BN.values()), key="dam_group")
+        grp_en = [k for k, v in GROUPS_BN.items() if v == grp_bn][0]
+    with c_d1:
+        d_from = st.date_input("তারিখ (শুরু)", value=_dtm.date.today() - _dtm.timedelta(days=6),
+                               max_value=_dtm.date.today(), key="dam_from")
+    with c_d2:
+        d_to = st.date_input("তারিখ (শেষ)", value=_dtm.date.today(),
+                             max_value=_dtm.date.today(), key="dam_to")
+
+    src_df, err = _fetch_dam(grp_en, d_from, d_to)
+
+    if src_df is not None and not src_df.empty:
+        st.success(f"✅ লাইভ তথ্য: কৃষি বিপণন অধিদপ্তর (DAM), market.dam.gov.bd — {len(src_df)}টি পর্যবেক্ষণ")
+        show = src_df.rename(columns={
+            "Commodity": "পণ্য", "Division": "বিভাগ", "District": "জেলা", "Market": "বাজার",
+            "PriceType": "ধরন", "Lowest_Tk": "সর্বনিম্ন ৳", "Highest_Tk": "সর্বোচ্চ ৳",
+            "Unit": "একক", "Date": "তারিখ"})
+        st.dataframe(show, use_container_width=True, hide_index=True)
+        st.caption("দাম DAM-এর প্রকাশিত এককে (৫০০ গ্রাম/মিলি/কেজি)। প্রতিটি সারির তারিখ দেখানো আছে — এটি রিয়েল-টাইম নয়, সরকারি রিপোর্ট।")
+    else:
+        st.warning("⚠️ ডিএএম সার্ভার এখন রিপোর্ট দিচ্ছে না" + (f" — {err}" if err else "") +
+                   "। কিছুক্ষণ পর আবার চেষ্টা করুন, অথবা নিচের আপলোড থেকে নিজের সংগৃহীত দামের CSV ব্যবহার করুন।")
+
+    with st.expander("📂 ম্যানুয়ালি দামের CSV/Excel আপলোড করুন (জেলার বাজার তথ্য)"):
+        st.markdown("ফাইলে এই কলামগুলো রাখুন: `পণ্য, জেলা, বাজার, দাম, একক, তারিখ` "
+                    "(ইংরেজি: Commodity, District, Market, Price, Unit, Date)")
+        upl = st.file_uploader("CSV/XLSX ফাইল", type=["csv", "xlsx"], key="dam_manual")
+        if upl is not None:
+            try:
+                mdf = pd.read_csv(upl) if upl.name.lower().endswith(".csv") else pd.read_excel(upl)
+                colmap = {"পণ্য": "Commodity", "জেলা": "District", "বাজার": "Market",
+                          "দাম": "Price_Tk", "একক": "Unit", "তারিখ": "Date"}
+                mdf = mdf.rename(columns={k: v for k, v in colmap.items() if k in mdf.columns})
+                need = {"Commodity", "Price_Tk", "Date"}
+                if not need.issubset(set(mdf.columns)):
+                    st.error("❌ ফাইলে কমপক্ষে Commodity/পণ্য, Price/দাম ও Date/তারিখ কলাম থাকতে হবে।")
+                else:
+                    mdf["Data_Source"] = "ম্যানুয়াল ইমপোর্ট"
+                    st.success(f"✅ {len(mdf)}টি নথি পড়া হয়েছে:")
+                    st.dataframe(mdf, use_container_width=True, hide_index=True)
+            except Exception as e:
+                st.error(f"❌ ফাইল পড়া যায়নি: {e}")
+
+    st.divider()
+    st.markdown(SAMPLE_DATA_NOTICE)
+    last_date = price_df['Price_Date'].max()
+    st.caption(f"সংকলিত নমুনা সেটে সর্বশেষ পর্যবেক্ষণ: {last_date.strftime('%d %B %Y')} — আজকের দাম নয়।")
+    recent = price_df[price_df['Price_Date'] >= last_date - pd.Timedelta(days=30)]
+    tab1, tab2 = st.tabs(["📋 টেবিল আকারে", "📊 নমুনা সেটের সারাংশ"])
+    with tab1:
+        rn = recent.copy()
+        rn['Crop_Name'] = rn['Crop_Name'].map(lambda c: translate_bn(c, crop_translation))
+        rn['District_Name'] = rn['District_Name'].map(lambda d: translate_bn(d, district_translation))
+        rn = rn.rename(columns={'Price_Tk_kg': 'দাম ৳/কেজি', 'Price_Date': 'তারিখ'})
+        st.dataframe(rn.sort_values('তারিখ', ascending=False)[['তারিখ', 'District_Name', 'Crop_Name', 'দাম ৳/কেজি']]
+                     .rename(columns={'District_Name': 'জেলা', 'Crop_Name': 'ফসল'}),
+                     use_container_width=True, hide_index=True)
+    with tab2:
+        summ = recent.groupby('District_Name')['Price_Tk_kg'].mean().sort_values(ascending=False).head(10)
+        fig_s = go.Figure(go.Bar(x=summ.values, y=[translate_bn(d, district_translation) for d in summ.index],
+                                 orientation='h', marker_color="#2a9d8f"))
+        fig_s.update_layout(height=380, margin=dict(t=10, b=10),
+                            xaxis_title="গড় দাম ৳/কেজি (নমুনা ডেটা)")
+        st.plotly_chart(fig_s, use_container_width=True)
+
+# -----------------------------------------------------------------------------
 # MODULE 1: AI PRICE FORECASTING
 # -----------------------------------------------------------------------------
-if menu == "📊 মূল্য পূর্বাভাস (এআই)" or menu == "💰 আজকের বাজারদর":
+elif menu == "📊 মূল্য পূর্বাভাস (এআই)":
     st.markdown("### মেশিন লার্নিং ব্যবহার করে ৩০ দিনের আগাম মূল্যের পূর্বাভাস।")
     
     # --- GEOLOCATION & PIN-POINT WEATHER SECTION ---
@@ -1587,119 +1613,64 @@ if menu == "📊 মূল্য পূর্বাভাস (এআই)" or men
         m3.metric("প্রবণতা", trend)
 
 
-        # SMS Alert Section (Personalized)
+        # Telegram Alert Section (free replacement for paid SMS)
         st.markdown("---")
-        st.subheader("📲 স্মার্ট এসএমএস অ্যালার্ট")
-        
-        c_sms1, c_sms2 = st.columns([2, 1])
-        with c_sms1:
-            # Autofill phone number if logged in
-            default_phone = st.session_state.user['phone'] if st.session_state.user else "+18777804236"
-            phone_number = st.text_input("মোবাইল নম্বর", value=default_phone)
-        
-        with c_sms2:
-            st.write("")
-            st.write("")
-            send_btn = st.button("🚀 পাঠান", type="primary", use_container_width=True)
-            
-        if send_btn:
-            # Login check enforcement (Optional, but adds value)
-            if not st.session_state.user:
-                st.warning("⚠️ অনুগ্রহ করে এসএমএস পেতে লগইন করুন।")
-            else:
-                with st.spinner("অ্যালার্ট জেনারেট হচ্ছে..."):
-                    insights = get_market_insights(price_df, selected_district, selected_crop)
-                    
-                    msg = f"সতর্কতা: {selected_district_bn}তে {selected_crop_bn} ৳{int(current_price)}।"
-                    if insights['best_districts_for_crop']:
-                        top_dist, top_price = insights['best_districts_for_crop'][0]
-                        if top_price > current_price:
-                            d_bn = translate_bn(top_dist, district_translation)
-                            msg += f" বেশি দাম: {d_bn}তে ৳{int(top_price)}।"
-                        else:
-                            msg += " এখানের দামই সেরা।"
-                    msg += " -AgriSmart"
-                    msg = msg[:158]
-                    
-                    success, response = send_sms_alert(phone_number, msg)
-                    if success:
-                        st.success("✅ এসএমএস পাঠানো হয়েছে!")
-                        st.balloons()
+        st.subheader("📲 টেলিগ্রাম অ্যালার্ট (ফ্রি)")
+
+        from telegram_alert import get_bot_token, detect_chat_id, send_telegram_alert
+
+        tg_token = get_bot_token()
+        if not tg_token:
+            st.info("ℹ️ টেলিগ্রাম অ্যালার্ট চালু করতে `.streamlit/secrets.toml` ফাইলে নিচের মতো যোগ করুন:\n\n"
+                    "```\n[telegram]\nbot_token = \"আপনার_বট_টোকেন\"\nchat_id = আপনার_চ্যাট_আইডি\n```\n\n"
+                    "Telegram-এ বট খুলে **/start** চাপুন, তারপর এই পেজে চ্যাট আইডি খুঁজে secrets-এ সেভ করুন।")
+        else:
+            c_tg1, c_tg2 = st.columns([2, 1])
+            with c_tg1:
+                saved_chat = ""
+                try:
+                    saved_chat = str(st.secrets.get("telegram", {}).get("chat_id", ""))
+                except Exception:
+                    pass
+                chat_id_in = st.text_input("চ্যাট আইডি", value=saved_chat)
+            with c_tg2:
+                st.write("")
+                st.write("")
+                detect_btn = st.button("🔎 চ্যাট আইডি খুঁজে নিন", use_container_width=True)
+
+            if detect_btn:
+                cid, who = detect_chat_id(tg_token)
+                if cid:
+                    st.success(f"✅ পাওয়া গেছে: চ্যাট আইডি `{cid}` ({who}) — কপি করে উপরের ঘরে বসান ও secrets-এ সেভ করুন।")
+                elif who == "no_updates":
+                    st.warning("⚠️ বট কোনো মেসেজ পায়নি। আগে Telegram-এ বট খুলে /start চাপুন, আবার চেষ্টা করুন।")
+                else:
+                    st.error(f"❌ পাওয়া যায়নি: {who}")
+
+            c_send1, c_send2 = st.columns([2, 1])
+            with c_send1:
+                st.caption("দামের সারসংক্ষেপ আপনার টেলিগ্রামে পাঠানো হবে।")
+            with c_send2:
+                send_btn = st.button("🚀 অ্যালার্ট পাঠান", type="primary", use_container_width=True)
+
+            if send_btn:
+                insights = get_market_insights(price_df, selected_district, selected_crop)
+                msg = f"🌾 স্মার্ট কৃষি বুদ্ধিমত্তা\n{selected_district_bn}: {selected_crop_bn} ৳{to_bengali_number(f'{current_price:.0f}')}/কেজি"
+                if insights['best_districts_for_crop']:
+                    top_dist, top_price = insights['best_districts_for_crop'][0]
+                    if top_price > current_price:
+                        d_bn = translate_bn(top_dist, district_translation)
+                        msg += f"\n📈 বেশি দাম: {d_bn}তে ৳{to_bengali_number(f'{top_price:.0f}')}/কেজি"
                     else:
-                        st.error(f"❌ ব্যর্থ: {response}")
+                        msg += "\n✅ এখানের দামই সেরা।"
+                ok, detail = send_telegram_alert(msg, chat_id=chat_id_in.strip() or None)
+                if ok:
+                    st.success("✅ টেলিগ্রামে অ্যালার্ট পাঠানো হয়েছে!")
+                else:
+                    st.error(f"❌ ব্যর্থ: {detail}")
 
 # -----------------------------------------------------------------------------
 # MODULE 2: BEST MARKET FINDER
-# -----------------------------------------------------------------------------
-elif menu == "__REMOVED_MARKET__":
-    st.title("💰 সেরা বাজার খুঁজুন")
-    st.divider()
-
-    all_crops = sorted(price_df['Crop_Name'].unique())
-    all_crops_display = {crop: translate_bn(crop, crop_translation) for crop in all_crops}
-    
-    # Session state for target crop
-    if 'target_crop_bn' not in st.session_state:
-        st.session_state.target_crop_bn = list(all_crops_display.values())[0]
-
-    if audio:
-        voice_text = voice_to_text(audio['bytes'])
-        if voice_text:
-            st.success(f"🗣️: **'{voice_text}'**")
-            updated = process_voice_command(
-                voice_text, 
-                crop_names=list(all_crops_display.values()), 
-                crop_key='target_crop_bn'
-            )
-            if updated:
-                time.sleep(0.5)
-                st.rerun()
-            elif not any(c in voice_text for c in list(all_crops_display.values())):
-                 st.toast("⚠️ কোনো ফসল পাওয়া যায়নি", icon="⚠️")
-
-    target_crop_bn = st.selectbox("🔍 ফসল নির্বাচন করুন", options=list(all_crops_display.values()), key='target_crop_bn')
-    target_crop = [k for k, v in all_crops_display.items() if v == target_crop_bn][0]
-
-    transport_cost = st.number_input("পরিবহন খরচ (টাকা/কেজি)", min_value=0.0, value=2.0)
-
-    latest_date = price_df['Price_Date'].max()
-    recent_data = price_df[(price_df['Crop_Name'] == target_crop) & (price_df['Price_Date'] >= latest_date - datetime.timedelta(days=60))]
-    market_data = recent_data.sort_values('Price_Date').groupby('District_Name').tail(1).copy()
-
-    if not market_data.empty:
-        market_data['Net_Profit'] = market_data['Price_Tk_kg'] - transport_cost
-        best_market = market_data.sort_values('Net_Profit', ascending=False).iloc[0]
-        
-        # Enhanced Net Profit Visualization with highlighted card
-        st.markdown(f"""
-        <div style='background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); 
-                    padding: 2rem; 
-                    border-radius: 15px; 
-                    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-                    text-align: center;
-                    margin: 1rem 0;'>
-            <h2 style='color: white; margin: 0; font-size: 1.5rem;'>🏆 সেরা বাজার</h2>
-            <h1 style='color: #ffffff; margin: 0.5rem 0; font-size: 2.5rem;'>{translate_bn(best_market['District_Name'], district_translation)}</h1>
-            <h3 style='color: white; margin: 0;'>নিট লাভ: ৳{to_bengali_number(f"{best_market['Net_Profit']:.2f}")}/কেজি</h3>
-            <p style='color: rgba(255,255,255,0.9); margin-top: 1rem;'>মূল্য: ৳{to_bengali_number(f"{best_market['Price_Tk_kg']:.2f}")} | পরিবহন: ৳{to_bengali_number(f"{transport_cost:.2f}")}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.subheader("📊 সকল জেলার তুলনা")
-        fig = px.bar(
-            market_data.sort_values('Net_Profit', ascending=True), 
-            x='Net_Profit', 
-            y='District_Name', 
-            orientation='h', 
-            color='Net_Profit', 
-            color_continuous_scale='Greens',
-            labels={'Net_Profit': 'নিট লাভ (৳/কেজি)', 'District_Name': 'জেলা'}
-        )
-        fig.update_layout(showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
-
-# -----------------------------------------------------------------------------
-# MODULE 3: SOIL ADVISOR
 # -----------------------------------------------------------------------------
 elif menu == "🌱 মাটি ও ফসল পরামর্শদাতা":
     st.title("🌱 ফসল পরামর্শদাতা")
@@ -1718,26 +1689,6 @@ elif menu == "🌱 মাটি ও ফসল পরামর্শদাতা"
 
     if 'target_district_bn_soil' not in st.session_state:
         st.session_state.target_district_bn_soil = list(soil_district_display.values())[default_idx]
-
-    # Voice Input
-    c1, c2 = st.columns([1, 4])
-    with c1:
-        audio = mic_recorder(start_prompt="🎤 বলুন", stop_prompt="🛑 থামুন", key='rec_soil', format="wav", use_container_width=True)
-    
-    if audio:
-        voice_text = voice_to_text(audio['bytes'])
-        if voice_text:
-            st.success(f"🗣️: **'{voice_text}'**")
-            updated = process_voice_command(
-                voice_text, 
-                district_names=list(soil_district_display.values()), 
-                district_key='target_district_bn_soil'
-            )
-            if updated:
-                time.sleep(0.5)
-                st.rerun()
-            elif not any(d in voice_text for d in list(soil_district_display.values())):
-                 st.toast("⚠️ কোনো জেলা পাওয়া যায়নি", icon="⚠️")
 
     target_district_bn = st.selectbox("📍 অবস্থান নির্বাচন করুন", options=list(soil_district_display.values()), index=default_idx, key='target_district_bn_soil')
     target_district = [k for k, v in soil_district_display.items() if v == target_district_bn][0]
@@ -1792,8 +1743,8 @@ elif menu == "🦠 ফসলের রোগ শনাক্তকরণ":
 
     if img_file:
         try:
-            file_bytes = np.asarray(bytearray(img_file.getvalue()), dtype=np.uint8)                 if hasattr(img_file, "getvalue") else None
-            image = Image.open(img_file if file_bytes is None else io.BytesIO(file_bytes))
+            raw_bytes = img_file.getvalue() if hasattr(img_file, "getvalue") else None
+            image = Image.open(io.BytesIO(raw_bytes) if raw_bytes is not None else img_file)
             image = image.convert("RGB")
         except Exception:
             st.error("ছবিটি পড়া যায়নি — ক্ষতিগ্রস্ত ফাইল হতে পারে। অন্য ছবি দিয়ে চেষ্টা করুন।")
@@ -1898,22 +1849,6 @@ elif menu == "📊 এগ্রি-ফাইন্যান্স ও লাভ 
         all_crops_display = {crop: translate_bn(crop, crop_translation) for crop in all_crops}
 
         # Voice Input (PROCESSED BEFORE WIDGETS)
-        audio = mic_recorder(start_prompt="🎤 বলুন", stop_prompt="🛑 থামুন", key='rec_calc', format="wav", use_container_width=True)
-        if audio:
-            voice_text = voice_to_text(audio['bytes'])
-            if voice_text:
-                st.success(f"🗣️: **'{voice_text}'**")
-                updated = process_voice_command(
-                    voice_text, 
-                    district_names=list(district_display.values()), 
-                    crop_names=list(all_crops_display.values()),
-                    district_key="f_dist",
-                    crop_key="f_crop"
-                )
-                if updated:
-                    time.sleep(0.5)
-                    st.rerun()
-
         f_district_bn = st.selectbox("জেলা নির্বাচন করুন", options=list(district_display.values()), key="f_dist")
         f_district = [k for k, v in district_display.items() if v == f_district_bn][0]
         
