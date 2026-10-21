@@ -1627,12 +1627,20 @@ elif menu == "🌱 মাটি ও ফসল পরামর্শদাতা"
     target_district = [k for k, v in soil_district_display.items() if v == target_district_bn][0]
 
     soil_record = soil_df[soil_df['District_Name'] == target_district].iloc[0]
-    
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("মাটি", translate_bn(soil_record['Soil_Type'], soil_translation))
     c2.metric("পিএইচ", to_bengali_number(f"{soil_record['pH_Level']:.2f}"))
-    c3.metric("নাইট্রোজেন", f"{to_bengali_number(f'{soil_record['Nitrogen_Content_kg_ha']:.1f}')}")
-    c4.metric("জৈব", f"{to_bengali_number(f'{soil_record['Organic_Matter_Percent']:.1f}')}%")
+
+    nitrogen_value = to_bengali_number(
+        f"{soil_record['Nitrogen_Content_kg_ha']:.1f}"
+    )
+    organic_matter_value = to_bengali_number(
+        f"{soil_record['Organic_Matter_Percent']:.1f}"
+    )
+
+    c3.metric("নাইট্রোজেন", nitrogen_value)
+    c4.metric("জৈব", f"{organic_matter_value}%")
 
     st.subheader("🌾 সুপারিশকৃত ফসল")
     dist_prod = prod_df[prod_df['District_Name'] == target_district]
