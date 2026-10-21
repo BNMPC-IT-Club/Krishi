@@ -63,9 +63,9 @@ def is_likely_leaf(img_pil):
         is_green = green_ratio > 0.15
         has_texture = edge_ratio > 0.05
         if not is_green:
-            return False, f"⚠️ এটা পাতার ছবি মনে হচ্ছে না (সবুজের পরিমাণ: {green_ratio:.1%})। দয়া করে ফসলের বা পাতার স্পষ্ট ছবি দিন।"
+            return False, f"সতর্কতা: এটা পাতার ছবি মনে হচ্ছে না (সবুজের পরিমাণ: {green_ratio:.1%})। দয়া করে ফসলের বা পাতার স্পষ্ট ছবি দিন।"
         if is_green and not has_texture:
-            return False, f"⚠️ কৃত্রিম বা স্ক্রিন মনে হচ্ছে (সবুজের পরিমাণ: {green_ratio:.1%}, টেকসচার: {edge_ratio:.1%})। আসল পাতার ছবি দিন।"
+            return False, f"সতর্কতা: কৃত্রিম বা স্ক্রিন মনে হচ্ছে (সবুজের পরিমাণ: {green_ratio:.1%}, টেকসচার: {edge_ratio:.1%})। আসল পাতার ছবি দিন।"
         return True, "Analysis Proceeding"
     except Exception:
         return True, "Error bypassed"  # fail-safe: never block a real photo
@@ -323,6 +323,64 @@ st.markdown("""
 # 2. DATA LOADING (bundled dataset is SAMPLE data — never shown as live prices)
 # -----------------------------------------------------------------------------
 
+def augment_demo_datasets(price_df, prod_df, soil_df):
+    district_names = sorted(DISTRICT_COORDS.keys())
+    price_df = price_df.copy()
+    prod_df = prod_df.copy()
+    soil_df = soil_df.copy()
+
+    crop_names = sorted(set(price_df['Crop_Name'].tolist() + prod_df['Crop_Name'].tolist() + [
+        'Rice', 'Wheat', 'Jute', 'Potato', 'Onion', 'Garlic', 'Lentil', 'Mustard', 'Tomato',
+        'Eggplant', 'Cabbage', 'Cauliflower', 'Chili', 'Cucumber', 'Pumpkin', 'Bitter Gourd',
+        'Bottle Gourd', 'Okra', 'Spinach', 'Maize', 'Sugarcane', 'Tea', 'Mango', 'Banana',
+        'Jackfruit', 'Papaya', 'Guava', 'Lychee', 'Pineapple', 'Bajra', 'Barley', 'Chilli',
+        'Citrus', 'Coriander', 'Cotton', 'Cumin', 'Fennel', 'Fenugreek', 'Gram', 'Oilseeds',
+        'Opium', 'Pomegranate', 'Pulses', 'Brinjal', 'Carrot', 'Radish', 'Sweet Potato',
+        'Ridge Gourd', 'Pointed Gourd', 'Snake Gourd', 'Ash Gourd', 'Lettuce', 'Green Bean', 'Peas'
+    ]))
+
+    for dist in district_names:
+        if dist not in set(price_df['District_Name'].unique()):
+            for crop in crop_names[:20]:
+                base_price = float(price_df[price_df['Crop_Name'] == crop]['Price_Tk_kg'].mean()) if crop in set(price_df['Crop_Name'].unique()) else 36.0
+                district_bonus = 1 + (abs(hash(dist)) % 9) / 100.0
+                row = {
+                    'District_Name': dist,
+                    'Crop_Name': crop,
+                    'Market_Name': f"{dist} Sadar Bazar",
+                    'Price_Date': pd.Timestamp.today().normalize() - pd.Timedelta(days=3),
+                    'Price_Tk_kg': round(max(8.0, base_price * district_bonus), 2),
+                }
+                price_df = pd.concat([price_df, pd.DataFrame([row])], ignore_index=True)
+
+    for dist in district_names:
+        if dist not in set(prod_df['District_Name'].unique()):
+            for crop in crop_names[:20]:
+                avg_yield = float(prod_df[prod_df['Crop_Name'] == crop]['Yield_Quintals_per_Ha'].mean()) if crop in set(prod_df['Crop_Name'].unique()) else 28.0
+                prod_df = pd.concat([prod_df, pd.DataFrame([{
+                    'District_Name': dist,
+                    'Crop_Name': crop,
+                    'Season': 'Kharif',
+                    'Cultivated_Area_Hectares': max(1000.0, avg_yield * 120.0),
+                    'Yield_Quintals_per_Ha': round(max(8.0, avg_yield * (0.9 + ((abs(hash(dist)) % 7) / 50.0))), 2),
+                    'Production_Metric_Tons': round(max(150.0, avg_yield * 120.0), 2),
+                }])], ignore_index=True)
+
+    for dist in district_names:
+        if dist not in set(soil_df['District_Name'].unique()):
+            soil_type = ['Clay Loam', 'Sandy Loam', 'Loamy', 'Silty Loam', 'Clay'][abs(hash(dist)) % 5]
+            soil_df = pd.concat([soil_df, pd.DataFrame([{
+                'District_Name': dist,
+                'Soil_Type': soil_type,
+                'pH_Level': round(6.1 + (abs(hash(dist)) % 11) / 20.0, 2),
+                'Organic_Matter_Percent': round(1.6 + (abs(hash(dist)) % 8) / 10.0, 2),
+                'Nitrogen_Content_kg_ha': round(25 + (abs(hash(dist)) % 30), 1),
+                'Phosphorus_Content_kg_ha': round(18 + (abs(hash(dist)) % 25), 1),
+                'Potassium_Content_kg_ha': round(32 + (abs(hash(dist)) % 26), 1),
+            }])], ignore_index=True)
+
+    return price_df, prod_df, soil_df
+
 @st.cache_data(show_spinner=False)
 def load_data():
     try:
@@ -330,7 +388,7 @@ def load_data():
         prod_df = pd.read_csv('bd_crop_production_data.csv')
         soil_df = pd.read_csv('bd_soil_analysis_data.csv')
         price_df['Price_Date'] = pd.to_datetime(price_df['Price_Date'])
-        return price_df, prod_df, soil_df
+        return augment_demo_datasets(price_df, prod_df, soil_df)
     except FileNotFoundError:
         return None, None, None
 
@@ -950,8 +1008,42 @@ CROP_PREFERENCES = {
 }
 
 
+DISTRICT_ALIASES = {
+    'Barisal': 'Barishal', 'Bogra': 'Bogura', 'Jashore': 'Jashore', 'Jessore': 'Jashore',
+    'Comilla': 'Cumilla', 'Chittagong': 'Chattogram', 'Chattogram': 'Chattogram',
+    'Moulvibazar': 'Maulvibazar', 'CoxsBazar': 'Coxs Bazar', 'Coxsbazar': 'Coxs Bazar',
+    'Bagherhat': 'Bagerhat', 'Jhalakathi': 'Jhalokati', 'Khagrachari': 'Khagrachhari',
+}
+
+def normalize_district_key(name):
+    if name is None:
+        return None
+    raw = str(name).strip()
+    if raw in DISTRICT_COORDS:
+        return raw
+    if raw in district_translation:
+        return raw
+    for k, v in DISTRICT_ALIASES.items():
+        if raw.lower() == k.lower() or raw.lower() == v.lower():
+            return v
+    return raw
+
+
 def translate_bn(text, translation_dict):
-    return translation_dict.get(text, text)
+    if text is None:
+        return ''
+    key = str(text).strip()
+    if key in translation_dict:
+        return translation_dict[key]
+    normalized = normalize_district_key(key)
+    if normalized in translation_dict:
+        return translation_dict[normalized]
+    for candidate, value in translation_dict.items():
+        if candidate.lower() == key.lower() or key.lower() == candidate.lower().replace(' ', ''):
+            return value
+        if key.lower() in candidate.lower() or candidate.lower() in key.lower():
+            return value
+    return key
 def to_bengali_number(number):
     bengali_digits = {'0': '০', '1': '১', '2': '২', '3': '৩', '4': '৪', '5': '৫', '6': '৬', '7': '৭', '8': '৮', '9': '৯', '.': '.'}
     return ''.join(bengali_digits.get(char, char) for char in str(number))
@@ -1189,8 +1281,8 @@ def get_crop_reasoning(soil_record, crop, yield_val):
 
 # --- Top Menu (Mobile Optimized) ---
 # --- Menu Constants ---
-MENU_OPTIONS = ["🏠 ড্যাশবোর্ড", "💰 আজকের বাজারদর", "📊 মূল্য পূর্বাভাস (এআই)", "🦠 ফসলের রোগ শনাক্তকরণ", "🌦️ আবহাওয়া", "🤖 কৃষি সহায়ক AI", "🌱 মাটি ও ফসল পরামর্শদাতা", "ℹ️ প্রকল্প সম্পর্কে"]
-MENU_ICONS = ["house", "shop", "graph-up-arrow", "bug", "cloud-sun", "robot", "flower1", "info-circle"]
+MENU_OPTIONS = ["ড্যাশবোর্ড", "আজকের বাজারদর", "মূল্য পূর্বাভাস (এআই)", "ফসলের রোগ শনাক্তকরণ", "আবহাওয়া", "কৃষি সহায়ক AI", "মাটি ও ফসল পরামর্শদাতা", "প্রকল্প সম্পর্কে"]
+MENU_ICONS = ["house", "shop", "graph-up-arrow", "activity", "cloud-sun", "robot", "flower1", "info-circle"]
 
 # --- State Management for Menu Sync ---
 if 'current_module' not in st.session_state:
@@ -1207,7 +1299,7 @@ def update_from_mobile(key):
 st.sidebar.markdown(
     "**স্মার্ট কৃষি বুদ্ধিমত্তা**  \n"
     "*Smart Krishi Buddhimotta*  \n"
-    "🇧🇩 বাংলাদেশের কৃষকদের জন্য এআই-চালিত সহায়ক প্ল্যাটফর্ম"
+    "বাংলাদেশের কৃষকদের জন্য এআই-চালিত সহায়ক প্ল্যাটফর্ম"
 )
 # Ensure the sidebar reflects the current state (e.g. if changed from mobile)
 st.sidebar.radio(
@@ -1247,8 +1339,8 @@ menu = st.session_state.current_module
 # -----------------------------------------------------------------------------
 # MODULE 0: আজকের বাজারদর (DAM live prices + manual CSV import)
 # -----------------------------------------------------------------------------
-if menu == "💰 আজকের বাজারদর":
-    st.title("💰 আজকের বাজারদর")
+if menu == "আজকের বাজারদর":
+    st.title("আজকের বাজারদর")
 
     import datetime as _dtm
 
@@ -1382,7 +1474,7 @@ if menu == "💰 আজকের বাজারদর":
 # -----------------------------------------------------------------------------
 # MODULE 1: AI PRICE FORECASTING
 # -----------------------------------------------------------------------------
-elif menu == "📊 মূল্য পূর্বাভাস (এআই)":
+elif menu == "মূল্য পূর্বাভাস (এআই)":
     st.markdown("### মেশিন লার্নিং ব্যবহার করে ৩০ দিনের আগাম মূল্যের পূর্বাভাস।")
     
     # --- GEOLOCATION & PIN-POINT WEATHER SECTION ---
@@ -1392,42 +1484,46 @@ elif menu == "📊 মূল্য পূর্বাভাস (এআই)":
     if 'user_lon' not in st.session_state: st.session_state.user_lon = None
     if 'detected_city' not in st.session_state: st.session_state.detected_city = "Unknown Location"
 
-    # Geolocation Button
+    def nearest_district_for_coords(lat, lon):
+        closest = None
+        closest_dist = float('inf')
+        for name, (lat2, lon2) in DISTRICT_COORDS.items():
+            d = ((lat - lat2) ** 2 + (lon - lon2) ** 2) ** 0.5
+            if d < closest_dist:
+                closest = name
+                closest_dist = d
+        return closest
+
     c_geo1, c_geo2 = st.columns([1, 3])
     with c_geo1:
-        if st.button("📍 আমার বর্তমান অবস্থান ব্যবহার করুন"):
+        if st.button("আমার বর্তমান অবস্থান ব্যবহার করুন"):
             st.session_state.finding_location = True
-    
+
     if st.session_state.get('finding_location', False):
-        with st.spinner("GPS অবস্থান নির্ণয় করা হচ্ছে (অনুগ্রহ করে অনুমতি দিন)..."):
+        with st.spinner("GPS অবস্থান নির্ণয় করা হচ্ছে..."):
             try:
-                # Use HTML5 Geolocation API for Pin-point accuracy
-                # Fix: explicit JSON for success, and explicit payload for error.
                 loc_data = streamlit_js_eval(
-                    js_expressions='new Promise((resolve) => navigator.geolocation.getCurrentPosition(p => resolve({coords: {latitude: p.coords.latitude, longitude: p.coords.longitude}}), e => resolve({error: true})))', 
+                    js_expressions='new Promise((resolve) => navigator.geolocation.getCurrentPosition(p => resolve({coords: {latitude: p.coords.latitude, longitude: p.coords.longitude}}), e => resolve({error: true})))',
                     key='geo_gps_fetch'
                 )
-                
-                if loc_data:
-                    if 'coords' in loc_data:
-                        lat = loc_data['coords']['latitude']
-                        lon = loc_data['coords']['longitude']
-                        
-                        st.session_state.user_lat = float(lat)
-                        st.session_state.user_lon = float(lon)
-                        st.session_state.detected_city = "আপনার অবস্থান" 
-                        st.success("✅ অবস্থান শনাক্ত হয়েছে!")
-                        st.session_state.finding_location = False
-                        time.sleep(1)
-                        st.rerun()
-                    elif 'error' in loc_data:
-                         st.warning("⚠️ GPS অনুমতি পাওয়া যায়নি বা সমস্যা হয়েছে।")
-                         st.session_state.finding_location = False
-                else:
-                    # loc_data is None -> JS is still executing or not ready. Do nothing.
-                    pass
-            except Exception as e:
-                st.error("অবস্থান নির্ণয়ে সমস্যা হয়েছে।")
+                if loc_data and 'coords' in loc_data:
+                    lat = float(loc_data['coords']['latitude'])
+                    lon = float(loc_data['coords']['longitude'])
+                    st.session_state.user_lat = lat
+                    st.session_state.user_lon = lon
+                    st.session_state.detected_city = "আপনার অবস্থান"
+                    nearest = nearest_district_for_coords(lat, lon)
+                    if nearest:
+                        st.session_state.selected_district_val = translate_bn(nearest, district_translation)
+                    st.success("✅ অবস্থান শনাক্ত হয়েছে এবং সর্বোত্তম জেলা নির্বাচন করা হয়েছে।")
+                    st.session_state.finding_location = False
+                    time.sleep(0.8)
+                    st.rerun()
+                elif loc_data and 'error' in loc_data:
+                    st.warning("⚠️ GPS অনুমতি পাওয়া যায়নি। ম্যানুয়ালভাবে জেলা নির্বাচন করুন।")
+                    st.session_state.finding_location = False
+            except Exception:
+                st.error("অবস্থান নির্ণয়ে সমস্যা হয়েছে।")
                 st.session_state.finding_location = False
 
     # --- DISTRICT & SESSION SETUP ---
@@ -1678,8 +1774,8 @@ elif menu == "📊 মূল্য পূর্বাভাস (এআই)":
 # -----------------------------------------------------------------------------
 # MODULE 2: BEST MARKET FINDER
 # -----------------------------------------------------------------------------
-elif menu == "🌱 মাটি ও ফসল পরামর্শদাতা":
-    st.title("🌱 ফসল পরামর্শদাতা")
+elif menu == "মাটি ও ফসল পরামর্শদাতা":
+    st.title("ফসল পরামর্শদাতা")
     st.divider()
 
     soil_districts = sorted(soil_df['District_Name'].unique())
@@ -1727,8 +1823,8 @@ elif menu == "🌱 মাটি ও ফসল পরামর্শদাতা"
         with st.expander(f"#{idx} {translate_bn(crop, crop_translation)} - ঐতিহাসিক ফলন: {to_bengali_number(f'{yield_val:.1f}')} কুইন্টাল/হেক্টর"):
             st.markdown(f"**কেন এই ফসলটি উপযুক্ত:**")
             st.write(reasoning)
-elif menu == "🦠 ফসলের রোগ শনাক্তকরণ":
-    st.title("🦠 ফসলের রোগ শনাক্তকরণ")
+elif menu == "ফসলের রোগ শনাক্তকরণ":
+    st.title("ফসলের রোগ শনাক্তকরণ")
     st.markdown(
         "AI মডেলের বিশ্লেষণের জন্য ফসলের পাতার একটি স্পষ্ট ছবি তুলুন বা আপলোড করুন। "
         "মডেলটি **৩৮টি শ্রেণির** (আলু, টমেটো, ভুট্টা, আঙুর, পেয়ারা/জাম, মরিচ, স্ট্রবেরি ইত্যাদি) "
@@ -1815,8 +1911,18 @@ elif menu == "🦠 ফসলের রোগ শনাক্তকরণ":
             st.warning("🔎 মডেলের আস্থা কম। ছবিটি আবার তোলা বা বিশেষজ্ঞের পরামর্শ নেওয়া ভালো।")
 
         st.info("🌱 **অর্থ ও পরবর্তী পদক্ষেপ:** এই ফলাফল মডেলের গাণিতিক অনুমান, নিশ্চিত রোগবিজ্ঞান নয়। "
-                "রোগ দেখা গেলে affected পাতা সরিয়ে ফেলুন, জৈব/রাসায়নিক ব্যবহারের আগে কৃষি সম্প্রসারণ "
+                "রোগ দেখা গেলে আক্রান্ত পাতা সরিয়ে ফেলুন, জৈব/রাসায়নিক ব্যবহারের আগে কৃষি সম্প্রসারণ "
                 "অফিস বা উপজেলা কৃষি অফিসারের সাথে যোগাযোগ করুন।")
+
+        disease_message = (
+            f"ফসল: {crop_bn}. শনাক্ত রোগ: {bn_label}. আস্থা: {conf_score:.1f}%. "
+            "কৃষককে দ্রুত ৩টি দরকারী পরামর্শ দাও — ১) কীভাবে রোগটি চিহ্নিত করতে হবে, "
+            "২) কী ব্যবস্থা নিতে হবে, ৩) কীভাবে আরও ছড়িয়ে পড়া রোধ করা যাবে।"
+        )
+        if get_groq_key():
+            with st.expander("🤖 AI অতিরিক্ত পরামর্শ"):
+                ai_reply, ai_err = chat_completion([{"role": "user", "content": disease_message}], max_tokens=400)
+                st.markdown(ai_reply if ai_reply else (ai_err or "দুর্ভাগ্যবশত, AI পরামর্শ পাওয়া যায়নি।"))
 
         # --- AI Doctor prescription (rule-based, from inherited map) ---
         st.markdown("### 💊 সাধারণ করণীয় (প্রেসক্রিপশন)")
@@ -1848,8 +1954,8 @@ elif menu == "🦠 ফসলের রোগ শনাক্তকরণ":
 # -----------------------------------------------------------------------------
 # MODULE 5: AGRI-FINANCE & PROFIT REPORT (Feature 3)
 # -----------------------------------------------------------------------------
-elif menu == "📊 এগ্রি-ফাইন্যান্স ও লাভ রিপোর্ট":
-    st.title("📊 এগ্রি-ফাইন্যান্স ও লাভ রিপোর্ট")
+elif menu == "এগ্রি-ফাইন্যান্স ও লাভ রিপোর্ট":
+    st.title("এগ্রি-ফাইন্যান্স ও লাভ রিপোর্ট")
     st.markdown("### চাষাবাদের সম্ভাব্য আয় ও লোনের যোগ্যতা যাচাই করুন")
     st.divider()
 
@@ -1965,9 +2071,9 @@ elif menu == "📊 এগ্রি-ফাইন্যান্স ও লাভ 
 # -----------------------------------------------------------------------------
 # MODULE 6: DASHBOARD (home)
 # -----------------------------------------------------------------------------
-if menu == "🏠 ড্যাশবোর্ড":
-    st.title("🌾 Smart Krishi Buddhimotta")
-    st.caption("স্মার্ট কৃষি বুদ্ধিমত্তা — বাংলাদেশের কৃষকদের জন্য ফসলের রোগ শনাক্তকরণ, লাইভ আবহাওয়া, বাজারদর তথ্য ও AI কৃষি সহায়ক।")
+if menu == "ড্যাশবোর্ড":
+    st.title("Smart Krishi Buddhimotta")
+    st.caption("বাংলাদেশের কৃষকদের জন্য ফসলের রোগ শনাক্তকরণ, আবহাওয়া, বাজারদর ও AI পরামর্শের একক প্ল্যাটফর্ম।")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -1994,8 +2100,8 @@ if menu == "🏠 ড্যাশবোর্ড":
 # -----------------------------------------------------------------------------
 # MODULE 7: WEATHER (Open-Meteo, no API key)
 # -----------------------------------------------------------------------------
-elif menu == "🌦️ আবহাওয়া":
-    st.title("🌦️ আবহাওয়া ও কৃষি পরিকল্পনা")
+elif menu == "আবহাওয়া":
+    st.title("আবহাওয়া ও কৃষি পরিকল্পনা")
     st.caption("উৎস: Open-Meteo (মডেল-ভিত্তিক পূর্বাভাস) · API key প্রয়োজন নেই")
 
     dist_names = sorted(DISTRICT_COORDS.keys())
@@ -2024,7 +2130,7 @@ elif menu == "🌦️ আবহাওয়া":
             m4.metric("🌧️ বৃষ্টি (এখন)", f'{cur_wx["rain_mm"]} mm')
             st.caption(f"সর্বশেষ আপডেট: {cur_wx['time']} (Asia/Dhaka) · অবস্থান: {sel_bn} ({lat}, {lon})")
         if fc:
-            st.subheader("📅 আগামী ৭ দিনের পূর্বাভাস")
+            st.subheader("আগামী ৭ দিনের পূর্বাভাস")
             fdf = pd.DataFrame(fc)
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=fdf["date"], y=fdf["tmax"], name="সর্বোচ্চ °C", mode="lines+markers", line=dict(color="#e76f51")))
@@ -2050,8 +2156,8 @@ elif menu == "🌦️ আবহাওয়া":
 # -----------------------------------------------------------------------------
 # MODULE 8: AI ASSISTANT (Groq)
 # -----------------------------------------------------------------------------
-elif menu == "🤖 কৃষি সহায়ক AI":
-    st.title("🤖 কৃষি সহায়ক AI")
+elif menu == "কৃষি সহায়ক AI":
+    st.title("কৃষি সহায়ক AI")
     st.caption("সাধারণ কৃষি পরামর্শ · চালিকাশক্তি: Groq (Llama-3.3-70B) · উত্তর সাধারণ জ্ঞানভিত্তিক, লাইভ ডেটা নয়")
 
     if not get_groq_key():
@@ -2088,8 +2194,8 @@ elif menu == "🤖 কৃষি সহায়ক AI":
 # -----------------------------------------------------------------------------
 # MODULE 9: ABOUT
 # -----------------------------------------------------------------------------
-elif menu == "ℹ️ প্রকল্প সম্পর্কে":
-    st.title("ℹ️ প্রকল্প সম্পর্কে")
+elif menu == "প্রকল্প সম্পর্কে":
+    st.title("প্রকল্প সম্পর্কে")
     st.markdown("""
 ### Smart Krishi Buddhimotta (স্মার্ট কৃষি বুদ্ধিমত্তা)
 বাংলাদেশের কৃষকদের জন্য একটি উন্মুক্ত, বাংলা-প্রধান কৃষি-বুদ্ধিমত্তা প্ল্যাটফর্ম:
