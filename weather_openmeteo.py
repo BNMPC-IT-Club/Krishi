@@ -31,6 +31,14 @@ DISTRICT_COORDS = {
     'Mymensingh': (24.7500, 90.4000), 'Jamalpur': (24.9300, 89.9300), 'Netrokona': (24.8700, 91.0900),
     'Sherpur': (25.0200, 90.0100),
 }
+# Aliases for alternate English spellings used in bundled datasets/UI
+DISTRICT_COORDS.update({
+    'Bogra': DISTRICT_COORDS['Bogura'],
+    'Moulvibazar': DISTRICT_COORDS['Maulvibazar'],
+    'Barisal': DISTRICT_COORDS['Barishal'],
+    'Bhola': (22.6859, 90.6482), 'Bagerhat': (22.6517, 89.7940),
+})
+
 
 WEATHER_CODES = {
     0: ("পরিষ্কার আকাশ", "☀️"), 1: ("আংশিক মেঘলা", "🌤️"), 2: ("মেঘলা", "☁️"),

@@ -21,7 +21,9 @@ import torch
 from disease_model import load_resnet9, predict_torch, CLASS_LABELS, WEIGHTS_FILE
 from weather_openmeteo import (DISTRICT_COORDS, get_current_weather, get_forecast,
                                weather_code_info, farm_advice)
-from groq_assistant import chat_completion, get_groq_key
+from ai_assistant import chat_completion, has_key as ai_has_key
+import folium
+import ui_icons as ic
 import dam_market
 from streamlit_option_menu import option_menu
 
@@ -343,22 +345,24 @@ SAMPLE_DATA_NOTICE = (
 
 # Dictionaries (Translation)
 district_translation = {
-    'Dhaka': 'ঢাকা', 'Chittagong': 'চট্টগ্রাম', 'Rajshahi': 'রাজশাহী', 'Khulna': 'খুলনা',
-    'Barisal': 'বরিশাল', 'Sylhet': 'সিলেট', 'Rangpur': 'রংপুর', 'Mymensingh': 'ময়মনসিংহ',
-    'Comilla': 'কুমিল্লা', 'Gazipur': 'গাজীপুর', 'Narayanganj': 'নারায়ণগঞ্জ', 'Tangail': 'টাঙ্গাইল',
-    'Jamalpur': 'জামালপুর', 'Bogra': 'বগুড়া', 'Pabna': 'পাবনা', 'Jessore': 'যশোর',
-    'Dinajpur': 'দিনাজপুর', 'Faridpur': 'ফরিদপুর', 'Kushtia': 'কুষ্টিয়া', 'Noakhali': 'নোয়াখালী',
-    'Brahmanbaria': 'ব্রাহ্মণবাড়িয়া', 'Feni': 'ফেনী', 'Lakshmipur': 'লক্ষ্মীপুর', 'Chandpur': 'চাঁদপুর',
-    'Kishoreganj': 'কিশোরগঞ্জ', 'Netrokona': 'নেত্রকোনা', 'Sherpur': 'শেরপুর', 'Habiganj': 'হবিগঞ্জ',
-    'Moulvibazar': 'মৌলভীবাজার', 'Sunamganj': 'সুনামগঞ্জ', 'Narsingdi': 'নরসিংদী', 'Munshiganj': 'মুন্সিগঞ্জ',
-    'Manikganj': 'মানিকগঞ্জ', 'Gopalganj': 'গোপালগঞ্জ', 'Madaripur': 'মাদারীপুর', 'Shariatpur': 'শরীয়তপুর',
-    'Rajbari': 'রাজবাড়ী', 'Magura': 'মাগুরা', 'Jhenaidah': 'ঝিনাইদহ', 'Narail': 'নড়াইল',
-    'Satkhira': 'সাতক্ষীরা', 'Bagerhat': 'বাগেরহাট', 'Pirojpur': 'পিরোজপুর', 'Jhalokati': 'ঝালকাঠি',
-    'Patuakhali': 'পটুয়াখালী', 'Barguna': 'বরগুনা', 'Sirajganj': 'সিরাজগঞ্জ', 'Natore': 'নাটোর',
-    'Chapainawabganj': 'চাঁপাইনবাবগঞ্জ', 'Naogaon': 'নওগাঁ', 'Joypurhat': 'জয়পুরহাট', 'Gaibandha': 'গাইবান্ধা',
-    'Kurigram': 'কুড়িগ্রাম', 'Lalmonirhat': 'লালমনিরহাট', 'Nilphamari': 'নীলফামারী', 'Panchagarh': 'পঞ্চগড়',
-    'Thakurgaon': 'ঠাকুরগাঁও', 'Coxs Bazar': 'কক্সবাজার', 'Bandarban': 'বান্দরবান', 'Rangamati': 'রাঙ্গামাটি',
-    'Khagrachari': 'খাগড়াছড়ি', 'Meherpur': 'মেহেরপুর', 'Chuadanga': 'চুয়াডাঙ্গা', 'Cumilla': 'কুমিল্লা'
+    'Dhaka': 'ঢাকা', 'Gazipur': 'গাজীপুর', 'Narayanganj': 'নারায়ণগঞ্জ', 'Tangail': 'টাঙ্গাইল',
+    'Kishoreganj': 'কিশোরগঞ্জ', 'Manikganj': 'মানিকগঞ্জ', 'Munshiganj': 'মুন্সিগঞ্জ', 'Narsingdi': 'নরসিংদী',
+    'Faridpur': 'ফরিদপুর', 'Gopalganj': 'গোপালগঞ্জ', 'Madaripur': 'মাদারীপুর', 'Rajbari': 'রাজবাড়ী',
+    'Shariatpur': 'শরীয়তপুর', 'Chattogram': 'চট্টগ্রাম', 'Cumilla': 'কুমিল্লা', 'Brahmanbaria': 'ব্রাহ্মণবাড়িয়া',
+    'Chandpur': 'চাঁদপুর', 'Feni': 'ফেনী', 'Lakshmipur': 'লক্ষ্মীপুর', 'Noakhali': 'নোয়াখালী',
+    'Coxs Bazar': 'কক্সবাজার', 'Bandarban': 'বান্দরবান', 'Rangamati': 'রাঙ্গামাটি', 'Khagrachhari': 'খাগড়াছড়ি',
+    'Khagrachari': 'খাগড়াছড়ি', 'Bhola': 'ভোলা', 'Barishal': 'বরিশাল', 'Barisal': 'বরিশাল',
+    'Barguna': 'বরগুনা', 'Jhalokati': 'ঝালকাঠি', 'Patuakhali': 'পটুয়াখালী', 'Pirojpur': 'পিরোজপুর',
+    'Sylhet': 'সিলেট', 'Moulvibazar': 'মৌলভীবাজার', 'Maulvibazar': 'মৌলভীবাজার', 'Habiganj': 'হবিগঞ্জ',
+    'Sunamganj': 'সুনামগঞ্জ', 'Rajshahi': 'রাজশাহী', 'Bogura': 'বগুড়া', 'Bogra': 'বগুড়া',
+    'Chapainawabganj': 'চাঁপাইনবাবগঞ্জ', 'Naogaon': 'নওগাঁ', 'Natore': 'নাটোর', 'Pabna': 'পাবনা',
+    'Sirajganj': 'সিরাজগঞ্জ', 'Khulna': 'খুলনা', 'Bagerhat': 'বাগেরহাট', 'Jessore': 'যশোর',
+    'Jashore': 'যশোর', 'Kushtia': 'কুষ্টিয়া', 'Magura': 'মাগুরা', 'Narail': 'নড়াইল',
+    'Satkhira': 'সাতক্ষীরা', 'Jhenaidah': 'ঝিনাইদহ', 'Meherpur': 'মেহেরপুর', 'Chuadanga': 'চুয়াডাঙ্গা',
+    'Dinajpur': 'দিনাজপুর', 'Gaibandha': 'গাইবান্ধা', 'Kurigram': 'কুড়িগ্রাম', 'Lalmonirhat': 'লালমনিরহাট',
+    'Nilphamari': 'নীলফামারী', 'Panchagarh': 'পঞ্চগড়', 'Rangpur': 'রংপুর', 'Thakurgaon': 'ঠাকুরগাঁও',
+    'Jamalpur': 'জামালপুর', 'Mymensingh': 'ময়মনসিংহ', 'Netrokona': 'নেত্রকোনা', 'Sherpur': 'শেরপুর',
+    'Joypurhat': 'জয়পুরহাট', 'Comilla': 'কুমিল্লা',
 }
 crop_translation = {
     'Rice': 'ধান', 'Wheat': 'গম', 'Jute': 'পাট', 'Potato': 'আলু', 'Onion': 'পেঁয়াজ',
@@ -370,8 +374,27 @@ crop_translation = {
     'Papaya': 'পেঁপে', 'Guava': 'পেয়ারা', 'Lychee': 'লিচু', 'Pineapple': 'আনারস',
     'Bajra': 'বাজরা', 'Barley': 'যব', 'Chilli': 'মরিচ', 'Citrus': 'লেবুজাতীয় ফল',    
     'Cotton': 'তুলা', 'Cumin': 'জিরা', 'Fennel': 'মৌরি', 'Fenugreek': 'মেথি',
-    'Gram': 'ছোলা', 'Oilseeds': 'তেলবীজ', 'Opium': 'আফিম', 'Pomegranate': 'ডালিম', 'Pulses': 'ডালশস্য' 
+    'Gram': 'ছোলা', 'Oilseeds': 'তেলবীজ', 'Opium': 'আফিম', 'Pomegranate': 'ডালিম', 'Pulses': 'ডালশস্য',
+
+    'Aman Rice': 'ধান (আমান)', 'Aus Rice': 'ধান (আউশ)', 'Boro Rice': 'ধান (বোরো)',
+    'Rice (Common)': 'ধান (সাধারণ)', 'Rice (Fine/Premium)': 'চাল (সুগন্ধি/প্রিমিয়াম)',
+    'Banana (Green)': 'কলা (কাঁচা)', 'Papaya (Green)': 'পেঁপে (কাঁচা)', 'Bay Leaf': 'তেজপাতা',
+    'Beans (French)': 'ফ্রেঞ্চ বীজ', 'Betel Nut (Supari)': 'সুপারি', 'Black Cumin (Kalo Jira)': 'কালো জিরা',
+    'Black Gram (Kalochana)': 'কালো চনা', 'Blackberry (Jam)': 'জাম', 'Cardamom': 'এলাচ',
+    'Citrus (Mixed)': 'লেবুজাতীয় ফল', 'Cloves': 'লবঙ্গ', 'Coconut (Daan)': 'নারকেল',
+    'Coriander Seed': 'ধনিয়া গুঁড়া', 'Date (Khajur)': 'খর্জুর', 'Green Chilli': 'কাঁচা মরিচ',
+    'Red Chilli': 'লাল মরিচ', 'Groundnut': 'চিনাবাদাম', 'Gram (Chickpea)': 'ছোলা',
+    'Jowar (Sorghum)': 'জোয়ার', 'Kamlabuk (Rose Apple)': 'কামরাঙা', 'Masoor (Lentil)': 'মসুর ডাল',
+    'Molasses (Gur)': 'গুড়', 'Mung Bean': 'মুগ ডাল', 'Oilseeds (Mixed)': 'তেলবীজ (মিশ্র)',
+    'Okra (Ladies Finger)': 'ঢেঁড়স', 'Peas (Green)': 'মটরশুঁটি', 'Pulses (Mixed)': 'ডাল (মিশ্র)',
+    'Rajma (Kidney Bean)': 'রাজমা', 'Soybean': 'সয়াবিন', 'Sugar': 'চিনি', 'Salt': 'লবণ',
+    'Tea Leaves': 'চা পাতা', 'Turmeric': 'হলুদ', 'Ginger': 'আদ', 'Garlic': 'রসুন',
+    'Brinjal': 'বেগুন', 'Pointed Gourd': 'পটল', 'Snake Gourd': 'চিচিঙ্গা', 'Drumstick': 'সেজ',
+    'Sweet Potato': 'মিষ্টা আলু', 'Carrot': 'গাজর', 'Radish': 'মূলা', 'Beet': 'বেট',
+    'Watermelon': 'তরমুজ', 'Lemon': 'লেবু', 'Orange': 'মাল্টা', 'Sunflower Seed': 'সূর্যমুখী বীজ',
+    'Cinnamon': 'দারুচিনি', 'Coconut': 'নারকেল', 'Kolakopa': 'কুলকোপা', 'Lal Shak': 'লাল শাক',
 }
+
 soil_translation = {
     'Clay': 'কর্দম মাটি', 'Loamy': 'দোআঁশ মাটি', 'Sandy': 'বেলে মাটি', 'Silt': 'পলি মাটি',
     'Clay Loam': 'কর্দম দোআঁশ', 'Sandy Loam': 'বেলে দোআঁশ', 'Silty Clay': 'পলি কর্দম',
@@ -1252,6 +1275,37 @@ if menu == "💰 আজকের বাজারদর":
 
     src_df, err = _fetch_dam(grp_en, d_from, d_to)
 
+    @st.cache_data(ttl=300)
+    def _demo_market_rows(group_bn):
+        """Prototype/demo board built from the bundled sample dataset."""
+        last_date = price_df['Price_Date'].max()
+        recent = price_df[price_df['Price_Date'] >= last_date - pd.Timedelta(days=14)]
+        kw = {"খাদ্যশস্য": ['Rice'], "ডাল/সাগ": ['Gram','Lentil','Masoor','Mung','Black Gram','Rajma','Peas'],
+              "ডাল": ['Gram','Lentil','Masoor','Mung'], "তেলবীজ": ['Mustard','Sunflower','Groundnut','Soybean','Oilseeds'],
+              "সবজি": ['Potato','Onion','Tomato','Brinjal','Eggplant','Cabbage','Cauliflower','Gourd','Okra','Carrot','Radish','Chilli','Spinach','Shak','Beans','Pointed','Snake','Pumpkin','Bitter','Bottle','Drumstick','Beet','Coriander','Green Chilli','Peas','Garlic'],
+              "ফল": ['Mango','Banana','Jackfruit','Papaya','Guava','Lychee','Pineapple','Watermelon','Lemon','Orange','Kamlabuk','Blackberry','Date','Coconut'],
+              "মসলা": ['Turmeric','Ginger','Cumin','Fennel','Fenugreek','Bay Leaf','Cloves','Cardamom','Cinnamon','Salt','Sugar','Red Chilli']}
+        keys = kw.get(group_bn, [])
+        sel = recent
+        if keys:
+            sel = recent[recent['Crop_Name'].apply(lambda c: any(k.lower() in c.lower() for k in keys))]
+        agg = (sel.groupby(['District_Name','Crop_Name'])['Price_Tk_kg'].mean()
+                 .reset_index().sort_values('Price_Tk_kg', ascending=False))
+        rows, seen = [], set()
+        for _, r in agg.iterrows():
+            bn_crop = translate_bn(r['Crop_Name'], crop_translation)
+            if bn_crop in seen:
+                continue
+            seen.add(bn_crop)
+            rows.append({"পণ্য": bn_crop,
+                         "জেলা": translate_bn(r['District_Name'], district_translation),
+                         "দাম ৳/কেজি": round(float(r['Price_Tk_kg']), 1),
+                         "তারিখ": last_date.strftime('%d/%m/%Y')})
+            if len(rows) >= 24:
+                break
+        return pd.DataFrame(rows)
+
+    
     if src_df is not None and not src_df.empty:
         st.success(f"✅ লাইভ তথ্য: কৃষি বিপণন অধিদপ্তর (DAM), market.dam.gov.bd — {len(src_df)}টি পর্যবেক্ষণ")
         show = src_df.rename(columns={
@@ -1259,10 +1313,29 @@ if menu == "💰 আজকের বাজারদর":
             "PriceType": "ধরন", "Lowest_Tk": "সর্বনিম্ন ৳", "Highest_Tk": "সর্বোচ্চ ৳",
             "Unit": "একক", "Date": "তারিখ"})
         st.dataframe(show, use_container_width=True, hide_index=True)
-        st.caption("দাম DAM-এর প্রকাশিত এককে (৫০০ গ্রাম/মিলি/কেজি)। প্রতিটি সারির তারিখ দেখানো আছে — এটি রিয়েল-টাইম নয়, সরকারি রিপোর্ট।")
+        st.caption("দাম DAM-এর প্রকাশিত এককে (৫০০ গ্রাম/মিলি/কেজি)।")
     else:
-        st.warning("⚠️ ডিএএম সার্ভার এখন রিপোর্ট দিচ্ছে না" + (f" — {err}" if err else "") +
-                   "। কিছুক্ষণ পর আবার চেষ্টা করুন, অথবা নিচের আপলোড থেকে নিজের সংগৃহীত দামের CSV ব্যবহার করুন।")
+        st.info("ℹ️ লাইভ DAM সার্ভার এক্সেস করা যাচ্ছে না — নিচে প্রোটোটাইপ (ডেমো) বাজারদর বোর্ড দেখানো হচ্ছে।")
+        demo = _demo_market_rows(grp_bn)
+        if demo.empty:
+            st.warning("এ খাতের জন্য ডেমো দাম পাওয়া যায়নি।")
+        else:
+            dc1, dc2 = st.columns([3, 2])
+            with dc1:
+                st.dataframe(demo, use_container_width=True, hide_index=True)
+            with dc2:
+                dsort = demo.sort_values("দাম ৳/কেজি")
+                fig_d = go.Figure(go.Bar(
+                    x=dsort["পণ্য"], y=dsort["দাম ৳/কেজি"],
+                    orientation='h', marker_color="#2a9d8f"))
+                fig_d.update_layout(height=max(320, 26*len(demo)), margin=dict(t=40, b=10),
+                                    title=f"{grp_bn} — গড় দাম ৳/কেজি (ডেমো)",
+                                    xaxis_title=None, yaxis_title=None)
+                st.plotly_chart(fig_d, use_container_width=True)
+            st.caption("এগুলো ব্যাক্তিগত সংগ্রহের নমুনা ডেটা থেকে তৈরি প্রোটোটাইপ বোর্ড — প্রকৃত বাজারদর নয়।")
+            st.download_button("📥 ডেমো বাজারদর CSV হিসেবে নামান",
+                               demo.to_csv(index=False).encode('utf-8-sig'),
+                               file_name="dam_demo_prices.csv", mime="text/csv")
 
     with st.expander("📂 ম্যানুয়ালি দামের CSV/Excel আপলোড করুন (জেলার বাজার তথ্য)"):
         st.markdown("ফাইলে এই কলামগুলো রাখুন: `পণ্য, জেলা, বাজার, দাম, একক, তারিখ` "
