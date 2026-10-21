@@ -1,0 +1,6 @@
+*.pth
+*.h5
+*.pt
+.streamlit/cache/
+.streamlit/secrets.toml
+__pycache__/
