@@ -7,7 +7,7 @@ This repository is split into two deployables. The Next.js UI stays in `ui-smart
 - GitHub access to this repository.
 - A Vercel account for the frontend.
 - A Render account (or another Python 3.11 host) for the API.
-- A Groq API key only if you want chat and AI-generated disease summaries. Create it in Groq Console and store it only in Render environment variables.
+- A Groq API key for Qwen multimodal disease-photo analysis and text chat/optional explanations. Disease photos are transmitted to Groq when this key is configured; the app shows this before upload. Store the key only in Render environment variables. Qwen is the primary visual path; if it is not configured or fails, the API falls back to the bundled local 38-class `.pth` model. If local weights/inference are unavailable, Qwen can still serve the diagnosis.
 - A Telegram bot token only if you want the optional bot welcome link. Create it with `@BotFather`; do not paste it into source code or chat.
 - Node.js 22 for local frontend development; Python 3.11 for the API.
 
@@ -18,12 +18,17 @@ There is **no database setup** and no `DATABASE_URL` requirement.
 1. In Render, choose **New → Blueprint** and connect this repository. Keep the repository root as the Blueprint/root directory so `render.yaml`, `backend/`, `disease_model.py`, the CSV, and the tracked model checkpoint are all available.
 2. Render reads [`render.yaml`](render.yaml). It installs `backend/requirements.txt`, starts `uvicorn backend.main:app`, and checks `/health`. The included plan is `free`; you can change it to a paid plan if you need faster cold starts, more memory, or a continuously available service.
 3. In the new service's **Environment** tab, add:
-   - `GROQ_API_KEY` — optional; required for Groq chat and AI disease summaries. Keep it in Render only.
+   - `GROQ_API_KEY` — required for Qwen vision, chat, and optional text explanations. Keep it in Render only; never use a `NEXT_PUBLIC_` variable.
+   - `GROQ_VISION_MODEL` — optional; defaults to `qwen/qwen3.8-27b`. Set only to a vision-capable model available to your Groq account.
+   - `GROQ_MODEL_PRIMARY` — optional text-only chat/explanation model; defaults to the fast `openai/gpt-oss-20b`.
+   - `GROQ_MODEL_FALLBACKS` — optional comma-separated text fallbacks; defaults to `llama-3.1-8b-instant`.
    - `FRONTEND_URL` — your Vercel production URL, e.g. `https://your-app.vercel.app` (no trailing slash). This is used for CORS if the API is called directly; the normal UI path is a server-side proxy.
-4. Wait for the deploy to finish. Open `https://YOUR-SERVICE.onrender.com/health`. A healthy response includes `"ok": true` and `"disease_weights_present": true`.
+
+   Keep `GROQ_API_KEY` server-side. Text model routing is a direct completion attempt followed by the configured fallback; no model-list request is required first.
+4. Wait for the deploy to finish. Open `https://YOUR-SERVICE.onrender.com/health`. A healthy response includes `"ok": true` and `"disease_weights_present": true` (either bundled local checkpoint is present).
 5. Copy the Render service's base URL. You will enter it in Vercel as `BACKEND_URL`, with no trailing slash.
 
-The disease checkpoint (`plant_disease_weights.pth`, about 26 MB) and CSV are already tracked in this repository. The model is loaded on first inference and cached in process memory; no training step occurs.
+Two already-tracked disease checkpoints are available: `plant_disease_weights.pth` (the compact state dict) is tried first; if it is missing or fails to load, `plant-disease-model-complete.pth` (the original full-model checkpoint) is tried next. The usable local model is loaded only if Qwen is not available, then cached in process memory; no training step occurs. Both checkpoints use the existing 38 PlantVillage classes. This checkout has no `.h5`/Keras model, so no H5 runtime or extra dependency is added.
 
 ### If you use another Python host
 
@@ -98,7 +103,10 @@ python3.11 -m venv .venv
 source .venv/bin/activate        # Windows PowerShell: .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r backend/requirements.txt
-export GROQ_API_KEY='your-private-key'  # optional; omit to use fallback disease advice
+export GROQ_API_KEY='your-private-key'  # enables Qwen vision and Groq text services; photos are sent to Groq
+export GROQ_VISION_MODEL='qwen/qwen3.8-27b'  # optional; this is the default vision model
+export GROQ_MODEL_PRIMARY='openai/gpt-oss-20b'  # optional; default fast text model
+export GROQ_MODEL_FALLBACKS='llama-3.1-8b-instant'  # optional text fallback
 export FRONTEND_URL='http://localhost:3000'
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -132,19 +140,20 @@ Open `http://localhost:3000`. The local weather route uses Open-Meteo; crop guid
 
 - `bd_crop_price_data.csv` is inherited sample/derived data with records dated **2024-03-21 to 2025-05-18**. It is not a current official Bangladesh market feed. The forecast endpoint uses it as a baseline and generates a deterministic 14-day **simulation dated around today**. The generated history is not an observed current-price series, and the forecast has not been validated. Crops without CSV rows use a labelled synthetic demo baseline.
 - The market table contains demo values. Do not use either screen to decide a real sale, purchase, or planting schedule.
-- The existing ResNet9 predicts among 38 PlantVillage classes only. It does not cover all local crops or diseases; its score is not a calibrated probability. The response explicitly warns when a selected local crop is outside the model's crop classes. Seek confirmation from a local agriculture officer.
-- Disease photos are compressed in the browser and sent to the Python API for inference. The photo is **not** sent to Groq; only top model labels/scores and the user's typed symptoms are sent for an optional text summary.
+- The local ResNet9 predicts among 38 PlantVillage classes only. It does not cover all local crops or diseases; its score is not a calibrated probability. Qwen is the preferred visual triage path, but it is still an estimate, not a validated field diagnosis. Seek confirmation from a local agriculture officer.
+- Disease photos are compressed in the browser, forwarded by the Python API, and sent to Groq Qwen Vision whenever `GROQ_API_KEY` is configured. The diagnosis screen discloses this before upload. The app does not persist photos, but Groq handles the request under its own service terms; avoid personal or identifying images. Qwen is preferred; if it is not configured or the provider/model fails, the API tries the local compact `.pth` checkpoint and then the original full `.pth` checkpoint. If local PyTorch/weights/inference are unavailable, configured Qwen still provides the visual path. The local model remains a limited fallback, not universal crop coverage.
+- Longer AI explanation is opt-in and uses a separate text-only Groq call with the short visual result and typed symptoms, not the image pixels. Product/rate/application data remains a server-side DAE PPW allow-list; the vision model cannot write prescriptions. No exact local crop–disease record means no product/dose is shown.
 - Weather comes from Open-Meteo; forecasts may be wrong. Map tiles are from OpenStreetMap. Respect those services' current terms and attribution.
 
 ## 7. Free-tier availability: important
 
-A free deployment is suitable for a demo, not a 24/7 guarantee. Render free web services may spin down after inactivity, have limited monthly compute and memory, and cold-start slowly. A cold start plus CPU PyTorch import/model loading can delay disease requests; a free instance may also hit memory or build limits. Vercel's free plan has its own usage and function-duration limits. **Do not promise always-awake or instant inference on free hosting.** If the app must respond reliably at all times, budget for an always-on backend plan with adequate memory and monitor its uptime. Exact provider quotas can change; check the plans shown in your accounts before launch.
+A free deployment is suitable for a demo, not a 24/7 guarantee. Render free web services may spin down after inactivity, have limited monthly compute and memory, and cold-start slowly. Qwen vision avoids loading PyTorch on the normal vision path; if it fails, importing CPU PyTorch and loading the local checkpoint may delay the fallback request. A free instance may also hit memory or build limits. Vercel's free plan has its own usage and function-duration limits. **Do not promise always-awake or instant inference on free hosting.** If the app must respond reliably at all times, budget for an always-on backend plan with adequate memory and monitor its uptime. Exact provider quotas can change; check the plans shown in your accounts before launch.
 
 ## Troubleshooting
 
 - **Chat says backend unavailable:** confirm `BACKEND_URL` in Vercel, redeploy, and check the Render `/health` endpoint. If this is the first request after inactivity, wait for Render to wake and retry.
 - **Chat says Groq key missing/invalid:** set `GROQ_API_KEY` in Render (not in client code), verify it in Groq Console, and redeploy/restart the API.
-- **Disease request cannot load model:** check `/health` for `disease_weights_present`; confirm `plant_disease_weights.pth` is present in the deployed Git revision and the Render instance has enough memory.
+- **Disease request cannot use the local fallback:** check `/health` for `disease_weights_present`, `disease_primary_weights_present`, and `disease_fallback_checkpoint_present`; confirm either `plant_disease_weights.pth` or `plant-disease-model-complete.pth` is present in the deployed Git revision and the Render instance has enough memory. If local PyTorch is unavailable, configure `GROQ_API_KEY` to use Qwen vision.
 - **Forecast shows local demo fallback:** check `/api/health` and the Render service. This fallback keeps the UI usable but is not a live price feed.
 - **Telegram receives no reply:** ensure `FRONTEND_URL`, token and secret match the deployed Vercel project, verify the webhook registration response, and test `/start` in a private chat with your bot.
 - **Weather unavailable:** Open-Meteo is external and keyless; retry later. No Groq or Render secret is involved in the weather request.

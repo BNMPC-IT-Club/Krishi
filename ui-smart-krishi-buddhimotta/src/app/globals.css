@@ -171,3 +171,35 @@ h2 { font-size:20px; line-height:1.38; letter-spacing:-.45px; margin-bottom:0; }
 .message.user .markdown-content a { color:#e3f5c2; }
 @media (max-width:860px) { .result-grid { grid-template-columns:1fr; gap:15px; }.source-links { grid-template-columns:1fr; } }
 @media (max-width:570px) { .brand-lockup .brand-copy strong { font-size:15px; }.brand-lockup .brand-copy span { max-width:155px; font-size:8px; }.result-card,.top-predictions-card,.product-recommendations,.ai-summary-card,.source-list-card { padding:18px 17px; }.result-heading { padding:17px; align-items:flex-start; }.result-heading h2 { font-size:17px; }.result-status-icon { width:38px; height:38px; }.product-card { padding:13px; }.capture-actions .secondary-capture { flex:1; padding:0 8px; font-size:11px; }.source-links { gap:7px; } }
+
+/* Compact farmer-first disease answer; detailed model output stays collapsed. */
+.diagnosis-direct-card { border-color:#dcebdd; background:linear-gradient(110deg,#f4faf4,#fff); }
+.diagnosis-copy { min-width:0; }
+.diagnosis-copy h2 { line-height:1.45; overflow-wrap:anywhere; }
+.result-cause { margin:3px 0 0; color:#3c7354; font-size:12px; font-weight:700; }
+.quick-prescription-card { padding:22px 24px; }
+.quick-prescription-card .signs-check ul { margin:4px 0 0; padding-left:18px; color:#5b7265; font-size:12px; line-height:1.6; }
+.quick-action-grid { margin-top:16px; }
+.quick-medicine { margin-top:17px; padding:15px 16px; border:1px solid #e8e8d6; border-radius:11px; background:#fffdf5; }
+.quick-medicine h3 { margin:0 0 7px; color:#365c45; font-size:13px; }
+.quick-medicine p { margin:5px 0; color:#536d5c; font-size:12px; line-height:1.6; }
+.quick-medicine .quick-product-name { color:#22563c; font-size:14px; }
+.quick-medicine .small-caveat { color:#758279; font-size:10px; }
+.quick-medicine.verified-medicine { border-color:#d3e8d8; background:#f5fbf5; }
+.quick-medicine.no-product-match { border-color:#eee4d2; background:#fffaf1; }
+.advanced-result-details { overflow:hidden; }
+.advanced-result-details > summary { padding:15px 19px; color:#496b56; font-size:12px; font-weight:700; cursor:pointer; list-style:none; }
+.advanced-result-details > summary::-webkit-details-marker { display:none; }
+.advanced-result-details > summary::after { content:"＋"; float:right; color:#61906f; }
+.advanced-result-details[open] > summary::after { content:"−"; }
+.advanced-result-content { padding:0 21px 21px; }
+.advanced-result-content .top-predictions-card { margin:14px 0; padding:15px; border:1px solid #e7eee8; border-radius:11px; background:#fbfdfb; }
+.advanced-result-content .top-predictions-card h3 { margin:0; color:#315842; font-size:14px; }
+.advanced-result-content > .product-card { margin-top:13px; }
+@media (max-width:570px) {
+  .quick-prescription-card { padding:18px 17px; }
+  .diagnosis-copy h2 { font-size:17px; }
+  .advanced-result-content { padding:0 14px 16px; }
+  .advanced-result-details > summary { padding:13px 15px; }
+  .quick-medicine { padding:13px; }
+}

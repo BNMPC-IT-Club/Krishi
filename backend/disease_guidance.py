@@ -7,6 +7,7 @@ output is used to invent pesticide brands, doses, or water amounts.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from backend.disease_labels import DISEASE_TRANSLATION
@@ -61,10 +62,11 @@ ACROBAT_MZ = {
     "name": "Acrobat MZ",
     "registration_no": "AP-353",
     "active_ingredients": "Mancozeb + Dimethomorph",
-    "label_scope": "আলু — Early blight ও Late blight",
+    "label_scope": "",
     "rate": "৪ গ্রাম / ১ লিটার পানি",
+    "application_method": "স্প্রে মেশিনে মিশ্রণ তৈরি করে গাছে প্রয়োগ; গোড়ায় ঢালার নির্দেশ নয়।",
     "directions": [
-        "DAE repository-তে প্রাথমিক সংক্রমণের পর্যায়ে ব্যবহারের কথা আছে; প্রয়োজন হলে ২ সপ্তাহ পর পুনঃপ্রয়োগের নির্দেশও আছে।",
+        "DAE PPW record-এ প্রাথমিক সংক্রমণের পর্যায়ে ব্যবহারের কথা আছে; প্রয়োজন হলে ২ সপ্তাহ পর পুনঃপ্রয়োগের নির্দেশও আছে।",
         "রেকর্ডে স্প্রে-পরবর্তী ফসল তোলার বিরতি ৭–১৪ দিন বলা আছে; প্যাকেটের বর্তমান লেবেলই চূড়ান্ত।",
     ],
     "source_label": "DAE PPW product record — Acrobat MZ",
@@ -75,20 +77,75 @@ CABRIO_TOP = {
     "name": "Cabrio Top",
     "registration_no": "AP-1770",
     "active_ingredients": "Pyraclostrobin + Metiram",
-    "label_scope": "কুমড়াজাতীয় (Cucurbits) — Powdery mildew",
+    "label_scope": "",
     "rate": "৩ গ্রাম / ১ লিটার পানি",
+    "application_method": "DAE PPW record-এ স্প্রে করার নির্দেশ আছে; গোড়ায় ঢালার নির্দেশ নয়।",
     "directions": [
-        "DAE PPW record-এ রোগের আগেই বা রোগের প্রাথমিক পর্যায়ে প্রয়োগের কথা আছে; ব্যবহারের আগে প্যাকেটের লেবেলে আপনার নির্দিষ্ট কুমড়াজাতীয় ফসলটি আছে কি না মিলিয়ে নিন।",
+        "DAE PPW record-এ রোগের আগেই বা রোগের প্রাথমিক পর্যায়ে প্রয়োগের কথা আছে; ব্যবহারের আগে প্যাকেটের লেবেলে আপনার নির্দিষ্ট ফসলটি আছে কি না মিলিয়ে নিন।",
         "রেকর্ডে প্রয়োগের পর ৭–১৪ দিন ফসল না তোলার কথা আছে; প্যাকেটের বর্তমান লেবেলই চূড়ান্ত।",
     ],
     "source_label": "DAE PPW product record — Cabrio Top",
     "source_url": "https://ppw.krishi.gov.bd/pesticide-details/4522",
 }
 
+COMPANION = {
+    "name": "Companion",
+    "registration_no": "AP-664",
+    "active_ingredients": "Carbendazim + Mancozeb",
+    "label_scope": "",
+    "rate": "২ গ্রাম / ১ লিটার পানি",
+    "application_method": "এই ফসল–রোগ সারিতে প্রয়োগপথ স্পষ্ট নয়; প্যাকেটের বর্তমান লেবেলে স্প্রে/গোড়ার নির্দেশ না মিলিয়ে প্রয়োগ করবেন না।",
+    "directions": [
+        "DAE PPW record-এ এই নির্দিষ্ট ফসল–রোগের জন্য ২ গ্রাম/লিটার মাত্রা আছে। প্যাকেটের বর্তমান লেবেলই চূড়ান্ত।",
+        "প্যাকেটের লেবেলে ফসল, রোগ, প্রয়োগপদ্ধতি ও ফসল তোলার বিরতি না মিললে ব্যবহার করবেন না।",
+    ],
+    "source_label": "DAE PPW product record — Companion",
+    "source_url": "https://ppw.krishi.gov.bd/pesticide-details/13610",
+}
+
+CABRIO_TOP_MANGO = {
+    **CABRIO_TOP,
+    "rate": "১ গ্রাম / ১ লিটার পানি",
+}
+
 _PRODUCT_BY_CLASS: dict[str, list[dict[str, Any]]] = {
     "Potato___Early_blight": [ACROBAT_MZ],
     "Potato___Late_blight": [ACROBAT_MZ],
     "Squash___Powdery_mildew": [CABRIO_TOP],
+    "Tomato___Early_blight": [COMPANION],
+    "Chili___Anthracnose": [ACROBAT_MZ],
+    "Groundnut___Tikka": [ACROBAT_MZ],
+    "Onion___Purple_blotch": [ACROBAT_MZ],
+    "Banana___Leaf_spot": [ACROBAT_MZ],
+    "Cucurbits___Powdery_mildew": [CABRIO_TOP],
+    "Mango___Anthracnose": [CABRIO_TOP_MANGO],
+}
+
+_PRODUCT_SCOPE_BY_CLASS = {
+    "Potato___Early_blight": "আলু — Early blight",
+    "Potato___Late_blight": "আলু — Late blight",
+    "Squash___Powdery_mildew": "স্কোয়াশ/কুমড়াজাতীয় — Powdery mildew",
+    "Tomato___Early_blight": "টমেটো — Early blight",
+    "Chili___Anthracnose": "মরিচ — Anthracnose",
+    "Groundnut___Tikka": "বাদাম — Tikka disease",
+    "Onion___Purple_blotch": "পেঁয়াজ — Purple blotch",
+    "Banana___Leaf_spot": "কলা — Leaf spot",
+    "Cucurbits___Powdery_mildew": "কুমড়াজাতীয় (Cucurbits) — Powdery mildew",
+    "Mango___Anthracnose": "আম — Anthracnose",
+}
+
+# If Qwen supplies a PlantVillage label alongside an exact DAE crop–disease
+# pair, contradictory labels suppress the product rather than choosing one.
+_COMPATIBLE_VISION_LABELS = {
+    "Potato___Early_blight": {"Potato___Early_blight"},
+    "Potato___Late_blight": {"Potato___Late_blight"},
+    "Tomato___Early_blight": {"Tomato___Early_blight"},
+    "Chili___Anthracnose": set(),
+    "Groundnut___Tikka": set(),
+    "Onion___Purple_blotch": set(),
+    "Banana___Leaf_spot": set(),
+    "Cucurbits___Powdery_mildew": {"Squash___Powdery_mildew"},
+    "Mango___Anthracnose": set(),
 }
 
 
@@ -166,7 +223,21 @@ def _general_actions(class_label: str) -> tuple[str, list[str], str]:
                 "আক্রান্ত পাতা জমিতে না ফেলে সরিয়ে দিন, পাতায় দীর্ঘসময় পানি লাগা কমান এবং গাছের মাঝে বাতাস চলাচল রাখুন।",
                 "স্প্রে করার আগে ফসল ও রোগের সঙ্গে পণ্যের বর্তমান লেবেল মিলিয়ে উপজেলা কৃষি অফিসারের পরামর্শ নিন।",
             ],
-            "DAE repository-তে এই রোগের জন্য একটি পণ্য-ব্যবহার এন্ট্রি আছে, কিন্তু formulation/লেবেল নির্দেশের বর্তমান মিল স্বাধীনভাবে নিশ্চিত করা যায়নি; তাই ব্র্যান্ড ও মাত্রা দেখানো হচ্ছে না।",
+            "এই ছবির মডেল-লেবেল একা রোগ নিশ্চিত করে না; দৃশ্যমান লক্ষণ ও ফসল মিলিয়ে DAE লেবেল যাচাই করুন।",
+        )
+
+    if class_label in {
+        "Chili___Anthracnose", "Groundnut___Tikka", "Onion___Purple_blotch",
+        "Banana___Leaf_spot", "Cucurbits___Powdery_mildew", "Mango___Anthracnose",
+    }:
+        return (
+            "possible_leaf_disease",
+            [
+                "পাতার দুই পাশ, কাণ্ড ও ফলেও একই লক্ষণ আছে কি হাতে মিলিয়ে দেখুন; পাশের সুস্থ গাছের সঙ্গে তুলনা করুন।",
+                "আক্রান্ত অবশেষ জমিতে ফেলে রাখবেন না; গাছের মাঝে বাতাস চলাচল ও পানি নিষ্কাশন বজায় রাখুন।",
+                "ফসল–রোগ মিলে গেলেও প্যাকেটের বর্তমান লেবেল, প্রয়োগপথ ও ফসল তোলার বিরতি না মিলিয়ে পণ্য প্রয়োগ করবেন না।",
+            ],
+            "এই ছবির AI-অনুমান নিশ্চিত রোগনির্ণয় নয়; DAE-র নির্দিষ্ট ফসল–রোগ রেকর্ড ও বর্তমান প্যাকেটের লেবেল মিলিয়ে নিন।",
         )
 
     return (
@@ -181,10 +252,13 @@ def _general_actions(class_label: str) -> tuple[str, list[str], str]:
 
 
 def get_disease_guidance(class_label: str) -> dict[str, Any]:
-    """Return deterministic advice for one of the model's exact class labels."""
+    """Return deterministic advice for one exact crop–disease class/pair."""
     healthy = "___healthy" in class_label
     category, actions, product_note = _general_actions(class_label)
-    products = _PRODUCT_BY_CLASS.get(class_label, [])
+    products = [
+        {**product, "label_scope": _PRODUCT_SCOPE_BY_CLASS.get(class_label, product.get("label_scope", ""))}
+        for product in _PRODUCT_BY_CLASS.get(class_label, [])
+    ]
     if products:
         category = "possible_disease_with_verified_label"
         product_note = (
@@ -228,3 +302,110 @@ def get_disease_guidance(class_label: str) -> dict[str, Any]:
         "source_checked_on": CHECKED_ON,
         "sources": sources,
     }
+
+
+def _normalise_vision_text(value: Any) -> str:
+    text = str(value or "").casefold()
+    return re.sub(r"[^a-z0-9\u0980-\u09ff]+", " ", text).strip()
+
+
+def _has_phrase(text: str, phrases: tuple[str, ...]) -> bool:
+    normalized = f" {_normalise_vision_text(text)} "
+    return any(f" {_normalise_vision_text(phrase)} " in normalized for phrase in phrases)
+
+
+def _visual_product_label(crop_en: str | None, crop_bn: str | None, disease_en: str | None, disease_bn: str | None) -> str | None:
+    crop_text = f"{crop_en or ''} {crop_bn or ''}"
+    disease_text = f"{disease_en or ''} {disease_bn or ''}"
+
+    if _has_phrase(crop_text, ("potato", "আলু")):
+        if _has_phrase(disease_text, ("early blight", "আর্লি ব্লাইট")):
+            return "Potato___Early_blight"
+        if _has_phrase(disease_text, ("late blight", "লেট ব্লাইট")):
+            return "Potato___Late_blight"
+    if _has_phrase(crop_text, ("tomato", "টমেটো")) and _has_phrase(disease_text, ("early blight", "আর্লি ব্লাইট")):
+        return "Tomato___Early_blight"
+    # DAE's label says Chili; do not equate this with capsicum/bell pepper.
+    if _has_phrase(crop_text, ("chili", "chilli", "chili pepper", "chilli pepper", "মরিচ", "লঙ্কা")) and _has_phrase(disease_text, ("anthracnose", "অ্যানথ্রাকনোজ", "এ্যানথ্রাকনোজ")):
+        return "Chili___Anthracnose"
+    if _has_phrase(crop_text, ("groundnut", "peanut", "বাদাম")) and _has_phrase(disease_text, ("tikka", "টিক্কা")):
+        return "Groundnut___Tikka"
+    if _has_phrase(crop_text, ("onion", "পেঁয়াজ", "পেঁয়াজ")) and _has_phrase(disease_text, ("purple blotch", "পার্পল ব্লচ")):
+        return "Onion___Purple_blotch"
+    if _has_phrase(crop_text, ("banana", "কলা")) and _has_phrase(disease_text, ("leaf spot", "পাতার দাগ")):
+        return "Banana___Leaf_spot"
+    cucurbits = (
+        "cucurbits", "squash", "pumpkin", "cucumber", "watermelon", "bottle gourd",
+        "bitter gourd", "ridge gourd", "snake gourd", "শসা", "কুমড়া", "কুমড়া",
+        "লাউ", "করলা", "স্কোয়াশ", "স্কোয়াশ", "তরমুজ", "কুমড়াজাতীয়", "কুমড়াজাতীয়",
+    )
+    if _has_phrase(crop_text, cucurbits) and _has_phrase(disease_text, ("powdery mildew", "পাউডারি মিলডিউ")):
+        return "Cucurbits___Powdery_mildew"
+    if _has_phrase(crop_text, ("mango", "আম")) and _has_phrase(disease_text, ("anthracnose", "অ্যানথ্রাকনোজ", "এ্যানথ্রাকনোজ")):
+        return "Mango___Anthracnose"
+    return None
+
+
+def get_unclassified_visual_guidance(cause_type: str = "unknown") -> dict[str, Any]:
+    """Safe next steps when the image result has no exact local rule match."""
+    actions = [
+        "একই গাছের নতুন ও পুরোনো পাতা, পাতার দুই পাশ এবং গোটা গাছের পরিষ্কার ছবি তুলে লক্ষণ মিলিয়ে দেখুন।",
+        "আক্রান্ত পাতা/অবশেষ জমিতে ফেলে রাখবেন না; পাতায় পানি জমা ও জলাবদ্ধতা এড়িয়ে মাটির আর্দ্রতা দেখে গোড়ায় সেচ দিন।",
+        "পাতার ছবি থেকে সার-ঘাটতি নিশ্চিত করা যায় না; মাটি পরীক্ষা বা উপজেলা কৃষি অফিসারের পরামর্শ ছাড়া বাড়তি সার দেবেন না।",
+    ]
+    if cause_type == "nutrient":
+        actions = [
+            "পুষ্টিঘাটতি নিশ্চিত করতে নতুন ও পুরোনো পাতার লক্ষণ এবং জমির মাটি পরীক্ষা করুন।",
+            "শুধু ছবির ভিত্তিতে ইউরিয়া/NPK বা অন্য সার দেবেন না; মাটি পরীক্ষার ফল ও স্থানীয় সুপারিশ অনুসরণ করুন।",
+        ]
+    elif cause_type in {"viral", "bacterial"}:
+        actions = [
+            "একই লক্ষণ অন্য গাছে ছড়াচ্ছে কি দেখুন; আক্রান্ত গাছ/চারা সাময়িক আলাদা রাখুন।",
+            "ভেজা গাছে কাজ/ছাঁটাই এড়িয়ে ব্যবহার-পরবর্তী সরঞ্জাম পরিষ্কার করুন; কারণ নিশ্চিত না করে ওষুধ দেবেন না।",
+        ]
+    return {
+        "category": "visual_unclassified",
+        "reason": "ছবিভিত্তিক AI ফলের সঙ্গে নির্দিষ্ট, যাচাইকৃত ফসল–রোগ নির্দেশনা মেলেনি।",
+        "signs_to_check": "পাতার দুই পাশ, নতুন ও পুরোনো পাতা, কাণ্ড এবং ফলের লক্ষণ হাতে মিলিয়ে দেখুন।",
+        "actions": actions,
+        "product_note": "এই ফসল–রোগ জুটির জন্য যাচাইকৃত DAE label-use match পাওয়া যায়নি; কোনো ব্র্যান্ড, মাত্রা বা প্রয়োগপথ অনুমান করে দেওয়া হচ্ছে না।",
+        "products": [],
+        "watering": {
+            "care": "মাটির আর্দ্রতা দেখে গোড়ায় প্রয়োজনমতো সেচ দিন; পাতায় পানি জমা ও জলাবদ্ধতা এড়ান।",
+            "amount_note": "ছবি থেকে জমির আয়তন, মাটি, গাছের বয়স বা আবহাওয়া জানা যায় না—তাই নির্দিষ্ট লিটার বলা নিরাপদ নয়।",
+        },
+        "source_checked_on": CHECKED_ON,
+        "sources": list(_BASE_SOURCES),
+    }
+
+
+def get_visual_disease_guidance(visual: dict[str, Any]) -> dict[str, Any]:
+    """Match a visual result only to an exact, locally curated DAE crop–disease use."""
+    cause_type = str(visual.get("cause_type", "unknown"))
+    if visual.get("leaf_status") != "leaf":
+        return get_unclassified_visual_guidance(cause_type)
+    if visual.get("confidence_band") == "low":
+        guidance = get_unclassified_visual_guidance(cause_type)
+        guidance["product_note"] = (
+            "ছবিভিত্তিক AI নিজেই শনাক্তকরণে কম নিশ্চিত; সম্ভাব্য DAE label থাকলেও ভুল ফসল/রোগে ওষুধ না দিতে পণ্য ও মাত্রা দেখানো হচ্ছে না। "
+            "ভালো আলোতে নতুন ছবি তুলুন বা উপজেলা কৃষি অফিসে মিলিয়ে নিন।"
+        )
+        return guidance
+
+    exact_label = _visual_product_label(
+        visual.get("crop_en"), visual.get("crop_bn"),
+        visual.get("disease_en"), visual.get("disease_bn"),
+    )
+    if exact_label:
+        qwen_class = visual.get("plantvillage_class_label")
+        compatible_classes = _COMPATIBLE_VISION_LABELS.get(exact_label, set())
+        if qwen_class and qwen_class not in compatible_classes:
+            guidance = get_unclassified_visual_guidance(cause_type)
+            guidance["product_note"] = (
+                "ছবির crop–disease বর্ণনা ও মডেলের শ্রেণি একে অপরের সঙ্গে মেলেনি; ভুল চিকিৎসা এড়াতে DAE পণ্য/মাত্রা দেখানো হচ্ছে না। "
+                "নতুন ছবি বা স্থানীয় কৃষি কর্মকর্তার সাহায্যে যাচাই করুন।"
+            )
+            return guidance
+        return get_disease_guidance(exact_label)
+
+    return get_unclassified_visual_guidance(cause_type)

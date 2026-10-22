@@ -2,7 +2,7 @@
 
 This is the Next.js frontend preserved from the repository's `ui-smart-krishi-buddhimotta` main-branch UI. Its layout, styling, and **ফসল পরামর্শ** guides are retained. Server routes proxy chat, image classification, and sample-price forecasts to the Python API at `../backend/` using a server-only `BACKEND_URL`.
 
-Disease assistance accepts drag-and-drop, gallery, or camera images and analyzes them automatically without a crop picker. AI explanation is opt-in. The existing ResNet9 remains limited to its 38 PlantVillage classes; treatment products are shown only for exact recorded crop/pest matches, with DAE source links and current-label/availability caveats.
+Disease assistance accepts drag-and-drop, gallery, or camera images and analyzes them automatically without a crop picker. When `GROQ_API_KEY` is configured, the backend sends the compressed image to Groq Qwen Vision for a short visual crop/disease estimate; the 38-class ResNet9 is a supporting signal or local fallback, not a universal Bangladesh crop detector. The UI discloses this image transfer before upload. Without Groq, the limited local classifier is a fallback and cannot unlock pesticide advice on its own. Longer AI explanation is opt-in and text-only. Product names/rates/application details come only from exact DAE PPW crop–disease records; unknown or uncertain pairs get safe nonchemical steps and no invented prescription.
 
 ## Develop locally
 

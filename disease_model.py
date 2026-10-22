@@ -64,10 +64,9 @@ CLASS_LABELS = [
 
 WEIGHTS_FILE = "plant_disease_weights.pth"
 
-# The 26 MB trained weights are stored outside GitHub (repo size limits).
-# They are downloaded ONCE on first start and cached in .streamlit/cache/.
-# Primary: the original repo (already contains the weights on GitHub).
-# Fallback: this project's own repo raw URL.
+# The API prefers the tracked state-dict checkpoint and may also load the
+# tracked original full-model checkpoint as a local fallback. These URLs are
+# retained for legacy standalone callers that need to retrieve missing weights.
 MODEL_URLS = [
     "https://github.com/NawrizTurjo/Agri-Smart-BD/raw/main/plant_disease_weights.pth",
     "https://github.com/NawrizTurjo/smart-krishi-buddhimotta/raw/main/plant_disease_weights.pth",
@@ -111,19 +110,33 @@ def ensure_weights(weights_path=WEIGHTS_FILE):
 
 
 def _torch_load(path):
-    """torch.load compatible with both PyTorch <2.6 and >=2.6 checkpoints."""
+    """Load state dicts and trusted legacy full checkpoints across PyTorch versions."""
+    import __main__
+
+    # The bundled original full-model checkpoint was saved in a notebook, so
+    # its pickle refers to ``__main__.ResNet9``. Point that name at this
+    # project's compatible architecture only for the duration of torch.load.
+    missing = object()
+    previous_resnet9 = getattr(__main__, "ResNet9", missing)
+    __main__.ResNet9 = ResNet9
     try:
-        obj = torch.load(path, map_location="cpu")  # PyTorch <2.6 default (weights_only=False)
-        if isinstance(obj, dict) and "state_dict" in obj:
-            obj = obj["state_dict"]
-        return obj
-    except Exception:
-        pass
-    # PyTorch >=2.6 defaults to weights_only=True; allow our own trusted classes.
-    try:
-        return torch.load(path, map_location="cpu", weights_only=False)
-    except Exception:
-        return torch.load(path, map_location="cpu", weights_only=True)
+        try:
+            obj = torch.load(path, map_location="cpu")  # PyTorch <2.6 default (weights_only=False)
+            if isinstance(obj, dict) and "state_dict" in obj:
+                obj = obj["state_dict"]
+            return obj
+        except Exception:
+            pass
+        # PyTorch >=2.6 defaults to weights_only=True; allow our trusted classes.
+        try:
+            return torch.load(path, map_location="cpu", weights_only=False)
+        except Exception:
+            return torch.load(path, map_location="cpu", weights_only=True)
+    finally:
+        if previous_resnet9 is missing:
+            delattr(__main__, "ResNet9")
+        else:
+            __main__.ResNet9 = previous_resnet9
 
 
 def load_resnet9(weights_path=WEIGHTS_FILE):

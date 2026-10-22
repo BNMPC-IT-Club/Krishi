@@ -34,9 +34,21 @@ type DiseaseProduct = {
   active_ingredients: string;
   label_scope: string;
   rate: string;
+  application_method: string;
   directions: string[];
   source_label: string;
   source_url: string;
+};
+type DiseaseDiagnosis = {
+  source: "groq_qwen_vision" | "plantvillage_classifier";
+  leaf_status: "leaf" | "not_leaf" | "uncertain";
+  crop_label: string;
+  disease_label: string;
+  cause_type: string;
+  cause_label_bn: string;
+  visible_signs_bn: string[];
+  nonchemical_actions_bn: string[];
+  confidence_band: "low" | "medium" | "high";
 };
 type DiseaseGuidance = {
   category: string;
@@ -51,9 +63,13 @@ type DiseaseGuidance = {
 };
 type DiseaseResponse = {
   prediction: DiseasePrediction;
+  diagnosis: DiseaseDiagnosis;
   top_predictions: DiseasePrediction[];
   scope_warning: string;
   guidance: DiseaseGuidance;
+  vision_analysis: { available: boolean; status: string; model: string };
+  local_model_available: boolean;
+  image_sent_to_groq: boolean;
   summary?: string | null;
   summary_requested: boolean;
   summary_available: boolean;
@@ -334,7 +350,7 @@ export default function HomePage() {
         signal: controller.signal,
       });
       const data = await response.json() as DiseaseResponse & { error?: string };
-      if (!response.ok || !data.prediction || !data.guidance) {
+      if (!response.ok || !data.prediction || !data.diagnosis || !data.guidance || !data.vision_analysis) {
         throw new Error(data.error ?? "ছবি বিশ্লেষণ করা যায়নি।");
       }
       if (requestId === diseaseRequestId.current) setDiseaseResult(data);
@@ -550,7 +566,11 @@ function DiseaseAssistant({
   clearImage: () => void;
   reanalyse: () => void;
 }) {
-  const healthy = result?.guidance.category === "healthy_class";
+  const diagnosis = result?.diagnosis;
+  const healthy = diagnosis?.cause_type === "healthy" || result?.guidance.category === "healthy_class";
+  const actions = diagnosis?.nonchemical_actions_bn.length
+    ? diagnosis.nonchemical_actions_bn.slice(0, 2)
+    : (result?.guidance.actions ?? []).slice(0, 2);
   const onDragLeave = (event: DragEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget;
     if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) setIsDragOver(false);
@@ -558,7 +578,7 @@ function DiseaseAssistant({
 
   return <>
     <ScreenTitle eyebrow="ছবি দিন, প্রাথমিক সহায়তা পান" title="রোগ সহায়তা" />
-    <div className="notice info-notice disease-scope-notice"><ShieldCheck size={19}/><div><strong>মডেলের সীমা ও নিরাপদ ব্যবহার</strong><p>ছবি আপলোড করলেই বিদ্যমান ৩৮-শ্রেণির PlantVillage ResNet9 মডেল চালু হবে। এটি বাংলাদেশের সব ফসল/রোগ বা যেকোনো পাতার ছবি শনাক্ত করে না, এবং সবসময় একটি শ্রেণি বেছে নেয়। স্কোর নিশ্চিত রোগনির্ণয় নয়—ফল ও বাস্তব লক্ষণ মিলিয়ে নিন।</p></div></div>
+    <div className="notice info-notice disease-scope-notice"><ShieldCheck size={19}/><div><strong>ছবিভিত্তিক AI প্রাথমিক যাচাই</strong><p>Qwen Vision চালু থাকলে আপনার ছবি এবং লেখা লক্ষণ (যদি দেন) বিশ্লেষণের জন্য Groq-এ পাঠানো হয়; স্থানীয় ResNet9-এর ৩৮টি PlantVillage শ্রেণি শুধু সহায়ক। ছবি থেকে ফসল/রোগ নিশ্চিত নয়—চিকিৎসার আগে লক্ষণ মিলিয়ে নিন। ব্যক্তিগত বা পরিচয়-দেখা যায় এমন ছবি দেবেন না।</p></div></div>
 
     <section className="disease-layout">
       <div className="upload-card panel">
@@ -593,52 +613,76 @@ function DiseaseAssistant({
       <div className="diagnosis-card panel">
         <div className="panel-heading"><div><p className="section-kicker">ঐচ্ছিক পর্যবেক্ষণ</p><h2>আপনি কী লক্ষ করছেন?</h2></div><Bug size={23} className="muted-icon"/></div>
         <label className="text-field"><span>পাতার দৃশ্যমান লক্ষণ (ঐচ্ছিক)</span><textarea value={symptom} onChange={(event) => setSymptom(event.target.value)} placeholder="যেমন: পাতায় বাদামি দাগ, কুঁকড়ে যাচ্ছে, গাছ দুর্বল দেখাচ্ছে…" rows={5}/></label>
-        <label className="ai-option-card"><input type="checkbox" checked={includeAiExplanation} onChange={(event) => setIncludeAiExplanation(event.target.checked)} /><span><strong>AI ব্যাখ্যা যোগ করুন</strong><small>এটি বন্ধ রাখলে শুধু মডেল ফল ও যাচাইকৃত নির্দেশনা দেখানো হবে। চালু করলে Groq-কে মডেলের লেবেল/স্কোর ও আপনার লেখা লক্ষণ দেওয়া হবে—ছবি পাঠানো হবে না।</small></span><Sparkles size={18}/></label>
+        <label className="ai-option-card"><input type="checkbox" checked={includeAiExplanation} onChange={(event) => setIncludeAiExplanation(event.target.checked)} /><span><strong>দীর্ঘ AI ব্যাখ্যা যোগ করুন</strong><small>সংক্ষিপ্ত ভিজ্যুয়াল ফল সবসময় আগে আসে। এটি চালু করলে Qwen ফল ও আপনার লেখা লক্ষণ Groq-এর টেক্সট মডেলে পাঠিয়ে অতিরিক্ত ব্যাখ্যা চাওয়া হবে; কোনো ওষুধ/ডোজ নয়।</small></span><Sparkles size={18}/></label>
         <button type="button" className="primary-button full-width" onClick={reanalyse} disabled={!plantImage || loading}>{loading ? <LoaderCircle size={17} className="spin"/> : <ScanLine size={17}/>} {loading ? "বিশ্লেষণ চলছে" : "লক্ষণ/AI বিকল্পসহ আবার বিশ্লেষণ"}</button>
         <p className="tiny-note"><ShieldCheck size={14}/> ফসল বাছাইয়ের প্রয়োজন নেই। লক্ষণ বা AI বিকল্প বদলালে নতুন বিশ্লেষণ চালান।</p>
       </div>
     </section>
 
     {result && <section className="disease-results" aria-live="polite">
-      <div className="result-heading panel">
+      <div className="result-heading panel diagnosis-direct-card">
         <div className="result-status-icon"><Leaf size={22}/></div>
-        <div><p className="section-kicker">ছবির মডেলের শীর্ষ অনুমান</p><h2>{result.prediction.crop_label} <span>·</span> {result.prediction.label}</h2><p className="result-score">মডেল স্কোর {formatBnNumber(result.prediction.score_percent, 1)}% · এটি ক্যালিব্রেটেড সম্ভাবনা নয়</p></div>
+        <div className="diagnosis-copy">
+          <p className="section-kicker">{diagnosis?.source === "groq_qwen_vision" ? "Qwen Vision · প্রাথমিক ছবি-অনুমান" : "স্থানীয় PlantVillage মডেল · প্রাথমিক অনুমান"}</p>
+          <h2>{diagnosis?.crop_label || result.prediction.crop_label} <span>·</span> {diagnosis?.disease_label || result.prediction.label}</h2>
+          <p className="result-cause">{diagnosis?.cause_label_bn || "কারণ অনিশ্চিত"}</p>
+          <p className="result-score">{result.image_sent_to_groq ? result.vision_analysis.available ? "ছবিটি visual analysis-এর জন্য Groq-এ পাঠানো হয়েছে।" : "Groq-এ ছবি বিশ্লেষণের অনুরোধ পাঠানো হয়েছে, তবে ফল পাওয়া যায়নি।" : "Groq Vision চালু নেই; স্থানীয় মডেলের ফল দেখানো হচ্ছে।"}</p>
+        </div>
       </div>
+      {!result.vision_analysis.available && <div className="notice warning-notice result-caveat"><FileWarning size={18}/><div><strong>ভিজ্যুয়াল AI ফল পাওয়া যায়নি</strong><p>{result.vision_analysis.status === "not_configured" ? "স্থানীয় ৩৮-শ্রেণির fallback দেখানো হয়েছে। Qwen ব্যবহার করতে backend-এ GROQ_API_KEY ও GROQ_VISION_MODEL সেট করুন।" : result.vision_analysis.status === "invalid_key" ? "Groq API key যাচাই হয়নি; স্থানীয় fallback দেখানো হয়েছে। Render-এর GROQ_API_KEY পরীক্ষা করুন।" : result.vision_analysis.status === "model_unavailable" ? "সেট করা Qwen vision model পাওয়া যায়নি; GROQ_VISION_MODEL ও account access পরীক্ষা করুন।" : result.vision_analysis.status === "rate_limit" ? "Groq-এর অনুরোধসীমা পূর্ণ; পরে আবার চেষ্টা করুন। আপাতত স্থানীয় fallback দেখানো হয়েছে।" : "Groq vision উত্তর দেয়নি; স্থানীয় ৩৮-শ্রেণির fallback দেখানো হয়েছে, যা বাংলাদেশের সব ফসল/রোগ শনাক্ত করে না।"}</p></div></div>}
       <div className="notice warning-notice result-caveat"><FileWarning size={19}/><div><strong>এটি নিশ্চিত রোগনির্ণয় নয়</strong><p>{result.scope_warning}</p></div></div>
 
-      <section className="panel result-card">
-        <div className="panel-heading"><div><p className="section-kicker">সহায়ক যাচাই</p><h2>{healthy ? "মডেল ‘সুস্থ’ শ্রেণি দিয়েছে" : "সম্ভাব্য সমস্যা যাচাই করুন"}</h2></div><ShieldCheck size={21} className="muted-icon"/></div>
-        <p className="result-explanation">{result.guidance.reason}</p>
-        <div className="signs-check"><strong>যে লক্ষণগুলো হাতে মিলিয়ে দেখবেন</strong><p>{result.guidance.signs_to_check}</p></div>
-        <div className="result-grid">
-          <div><h3>এখন যা করতে পারেন</h3><ul>{result.guidance.actions.map((action, index) => <li key={index}>{action}</li>)}</ul></div>
-          <div><h3>সেচ ও পানি ব্যবস্থাপনা</h3><p>{result.guidance.watering.care}</p><p className="small-caveat">{result.guidance.watering.amount_note}</p></div>
+      <section className="panel result-card quick-prescription-card">
+        <div className="panel-heading"><div><p className="section-kicker">ছোট, সরাসরি পরবর্তী পদক্ষেপ</p><h2>{healthy ? "এখনই ওষুধ নয়" : "এখন কী করবেন"}</h2></div><ShieldCheck size={21} className="muted-icon"/></div>
+        {diagnosis?.visible_signs_bn?.length ? <div className="signs-check"><strong>ছবিতে AI যে লক্ষণ দেখেছে</strong><ul>{diagnosis.visible_signs_bn.slice(0, 2).map((sign, index) => <li key={index}>{sign}</li>)}</ul></div> : <div className="signs-check"><strong>হাতে মিলিয়ে দেখুন</strong><p>{result.guidance.signs_to_check}</p></div>}
+        {diagnosis?.leaf_status === "not_leaf" && <p className="small-caveat">পাতার পরিষ্কার ছবি দিন—এই ফলের ভিত্তিতে কোনো চিকিৎসা করবেন না।</p>}
+        <div className="result-grid quick-action-grid">
+          <div><h3>করণীয়</h3><ul>{actions.map((action, index) => <li key={index}>{action}</li>)}</ul></div>
+          <div><h3>পানি</h3><p>{result.guidance.watering.care}</p><p className="small-caveat">{result.guidance.watering.amount_note}</p></div>
+        </div>
+
+        <div className={`quick-medicine ${result.guidance.products.length && !healthy && diagnosis?.leaf_status === "leaf" ? "verified-medicine" : "no-product-match"}`}>
+          <h3>{result.guidance.products.length && !healthy && diagnosis?.leaf_status === "leaf" ? "যাচাইকৃত DAE পণ্য-রেকর্ড" : "ওষুধ / সার"}</h3>
+          {result.guidance.products.length && !healthy && diagnosis?.leaf_status === "leaf" ? <>
+            {(() => { const product = result.guidance.products[0]; return <>
+              <p className="quick-product-name"><strong>{product.name}</strong> · AP-{product.registration_no.replace(/^AP-/, "")}</p>
+              <p><strong>শুধু এই ব্যবহার:</strong> {product.label_scope}</p>
+              <p><strong>রেকর্ডের মাত্রা:</strong> {product.rate}</p>
+              <p><strong>প্রয়োগপথ:</strong> {product.application_method}</p>
+              <p className="small-caveat">ছবির AI ফল ভুল হতে পারে—ফসল/রোগ বাস্তবে মিললে তবেই বিবেচনা করুন। বর্তমান প্যাকেটের লেবেলই চূড়ান্ত; রেকর্ড মানেই দোকানে মজুত বা নিবন্ধন সক্রিয়—এ নিশ্চয়তা নয়।</p>
+              <a className="product-source-link" href={product.source_url} target="_blank" rel="noreferrer">{product.source_label} <MoveUpRight size={14}/></a>
+            </>; })()}
+          </> : <>
+            <p>{healthy ? "রোগ বা পুষ্টিঘাটতি নিশ্চিত নয়—অপ্রয়োজনীয় ওষুধ/সার দেবেন না।" : "এই ফল থেকে নিরাপদে DAE label-dose নিশ্চিত করা যাচ্ছে না।"}</p>
+            {!healthy && <p className="small-caveat">নিজে থেকে ব্র্যান্ড, মাত্রা, মিশ্রণ বা পাতায়/গোড়ায় প্রয়োগ ঠিক করবেন না; আগে উপজেলা কৃষি অফিসে যাচাই করুন।</p>}
+          </>}
         </div>
       </section>
 
-      <section className="panel top-predictions-card">
-        <div className="panel-heading"><div><p className="section-kicker">বিকল্প শ্রেণি</p><h2>শীর্ষ মডেল ফল</h2></div><span className="model-tag">৩৮-শ্রেণির মডেল</span></div>
-        <div className="prediction-list">{result.top_predictions.slice(0, 3).map((item, index) => <div className="prediction-item" key={item.class_label}>
-          <span className="prediction-rank">{formatBnNumber(index + 1)}</span><div className="prediction-name"><strong>{item.crop_label} · {item.label}</strong><div className="prediction-track"><i style={{ width: `${Math.max(0, Math.min(100, item.score_percent))}%` }}/></div></div><span className="prediction-score">{formatBnNumber(item.score_percent, 1)}%</span>
-        </div>)}</div>
-      </section>
+      <details className="advanced-result-details panel">
+        <summary>মডেলের বিকল্প ফল, পণ্যের নির্দেশনা ও উৎস</summary>
+        <div className="advanced-result-content">
+          <p className="result-explanation">{result.guidance.reason}</p>
+          <div className="signs-check"><strong>আরও যে লক্ষণগুলো মিলিয়ে দেখবেন</strong><p>{result.guidance.signs_to_check}</p></div>
+          {result.top_predictions.length > 0 ? <div className="top-predictions-card">
+            <div className="panel-heading"><div><p className="section-kicker">কেবল স্থানীয় মডেলের বিকল্প</p><h3>শীর্ষ শ্রেণিগুলো</h3></div><span className="model-tag">৩৮-শ্রেণির মডেল</span></div>
+            <div className="prediction-list">{result.top_predictions.slice(0, 3).map((item, index) => <div className="prediction-item" key={item.class_label}>
+              <span className="prediction-rank">{formatBnNumber(index + 1)}</span><div className="prediction-name"><strong>{item.crop_label} · {item.label}</strong><div className="prediction-track"><i style={{ width: `${Math.max(0, Math.min(100, item.score_percent))}%` }}/></div></div><span className="prediction-score">{formatBnNumber(item.score_percent, 1)}%</span>
+            </div>)}</div>
+            <p className="small-caveat">এগুলো softmax score, ক্যালিব্রেটেড সম্ভাবনা বা নির্ভুলতা নয়।</p>
+          </div> : <p className="small-caveat">স্থানীয় ৩৮-শ্রেণির মডেল এই অনুরোধে চালু ছিল না।</p>}
+          {result.guidance.products.map((product) => <article className="product-card" key={product.registration_no}>
+            <div className="product-card-heading"><div><h3>{product.name}</h3><span>AP নম্বর: {product.registration_no} · {product.active_ingredients}</span></div><span className="verified-tag">DAE record</span></div>
+            <p><strong>লেবেলে উল্লেখিত ব্যবহার:</strong> {product.label_scope}</p><p><strong>রেকর্ডের মাত্রা:</strong> {product.rate}</p><p><strong>প্রয়োগপথ:</strong> {product.application_method}</p>
+            <ul>{product.directions.map((direction, index) => <li key={index}>{direction}</li>)}</ul>
+            <a className="product-source-link" href={product.source_url} target="_blank" rel="noreferrer">{product.source_label} <MoveUpRight size={14}/></a>
+          </article>)}
+          <div className="source-links">{result.guidance.sources.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer">{source.label}<MoveUpRight size={14}/></a>)}</div>
+          <p className="small-caveat">রেফারেন্স শেষ পর্যালোচনা: {result.guidance.source_checked_on} · PRISM-এর তালিকা উপজেলা-ভিত্তিক; এটি বাজারে পণ্য মজুত বা ছবির রোগনির্ণয়ের নিশ্চয়তা নয়।</p>
+        </div>
+      </details>
 
-      {result.guidance.products.length > 0 && <section className="panel product-recommendations">
-        <div className="panel-heading"><div><p className="section-kicker">DAE PPW repository record</p><h2>DAE-তে নথিভুক্ত ব্যবহার</h2></div><ShieldCheck size={21} className="muted-icon"/></div>
-        <p className="product-safety-note">{result.guidance.product_note}</p>
-        <div className="product-list">{result.guidance.products.map((product) => <article className="product-card" key={product.registration_no}>
-          <div className="product-card-heading"><div><h3>{product.name}</h3><span>AP নম্বর: {product.registration_no} · {product.active_ingredients}</span></div><span className="verified-tag">DAE record</span></div>
-          <p><strong>লেবেলে উল্লেখিত ব্যবহার:</strong> {product.label_scope}</p><p><strong>রেকর্ডের মাত্রা:</strong> {product.rate}</p>
-          <ul>{product.directions.map((direction, index) => <li key={index}>{direction}</li>)}</ul>
-          <a className="product-source-link" href={product.source_url} target="_blank" rel="noreferrer">{product.source_label} <MoveUpRight size={14}/></a>
-        </article>)}</div>
-        <p className="small-caveat">রেকর্ডটি সক্রিয় নিবন্ধন বা স্থানীয় দোকানে মজুতের নিশ্চয়তা নয়। প্যাকেটের বর্তমান লেবেল, ফসল, রোগ, মাত্রা ও PHI মিলিয়ে নিন; প্রয়োজনে উপজেলা কৃষি অফিসারের পরামর্শ নিন।</p>
-      </section>}
-      {!result.guidance.products.length && !healthy && <section className="panel product-recommendations no-product-match"><div className="panel-heading"><div><p className="section-kicker">বালাইনাশক বিষয়ে সতর্কতা</p><h2>যাচাইকৃত পণ্য-তথ্য নেই</h2></div><ShieldCheck size={21} className="muted-icon"/></div><p className="product-safety-note">{result.guidance.product_note}</p><p className="small-caveat">নিজে থেকে ব্র্যান্ড, মিশ্রণ, মাত্রা বা পানির পরিমাণ ঠিক করবেন না। উপজেলা-ভিত্তিক তালিকা এবং বর্তমান প্যাকেট-লেবেল যাচাই করুন।</p></section>}
-
-      {result.summary_requested && <section className="panel ai-summary-card"><div className="panel-heading"><div><p className="section-kicker">ঐচ্ছিক AI ব্যাখ্যা</p><h2>সাধারণ পরবর্তী পদক্ষেপ</h2></div><Sparkles size={20} className="muted-icon"/></div>{result.summary_available && result.summary ? <MarkdownContent content={result.summary} className="ai-summary-text"/> : <p className="small-caveat">এই মুহূর্তে AI ব্যাখ্যা পাওয়া যায়নি। উপরের নিয়মভিত্তিক নির্দেশনা দেখা যাচ্ছে।</p>}<p className="small-caveat">AI ছবিটি দেখেনি। AI ব্যাখ্যা সাধারণ তথ্য; ওষুধ/মাত্রার পরামর্শ নয়।</p></section>}
-
-      <section className="panel source-list-card"><div className="panel-heading"><div><p className="section-kicker">সরকারি তথ্য ও সতর্কতা</p><h2>উৎস ও আরও যাচাই</h2></div><ShieldCheck size={20} className="muted-icon"/></div><div className="source-links">{result.guidance.sources.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer">{source.label}<MoveUpRight size={14}/></a>)}</div><p className="small-caveat">রেফারেন্স শেষ পর্যালোচনা: {result.guidance.source_checked_on} · PRISM-এর তালিকা উপজেলা-ভিত্তিক; এটি বাজারে সবসময় পণ্য পাওয়া বা এই মডেলের রোগ শনাক্তকরণের নিশ্চয়তা নয়।</p></section>
+      {result.summary_requested && <section className="panel ai-summary-card"><div className="panel-heading"><div><p className="section-kicker">ঐচ্ছিক AI ব্যাখ্যা</p><h2>আরও ব্যাখ্যা</h2></div><Sparkles size={20} className="muted-icon"/></div>{result.summary_available && result.summary ? <MarkdownContent content={result.summary} className="ai-summary-text"/> : <p className="small-caveat">এই মুহূর্তে AI ব্যাখ্যা পাওয়া যায়নি। সংক্ষিপ্ত নিয়মভিত্তিক নির্দেশনা উপরে আছে।</p>}<p className="small-caveat">টেক্সট মডেল ছবির pixel দেখে না; এটি Qwen Vision-এর সংক্ষিপ্ত ফল ও আপনার লেখা লক্ষণ থেকে ব্যাখ্যা দেয়। AI ব্যাখ্যা কোনো প্রেসক্রিপশন নয়।</p></section>}
     </section>}
   </>;
 }
