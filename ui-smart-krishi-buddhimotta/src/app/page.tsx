@@ -1,10 +1,11 @@
 "use client";
 
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import NextImage from "next/image";
 import {
   Bot, Bug, CalendarDays, Camera, ChevronRight, CloudDrizzle, CloudRain, CloudSun, Crosshair,
   Droplets, FileWarning, Gauge, ImagePlus, Leaf, LoaderCircle, Map, MapPin, Menu, MessageCircle,
-  MoveUpRight, Navigation, ScanLine, Send, ShieldCheck, ShoppingBasket, Sparkles,
+  Mic, MicOff, MoveUpRight, Navigation, ScanLine, Send, ShieldCheck, ShoppingBasket, Sparkles,
   Sprout, ThermometerSun, TrendingDown, TrendingUp, Upload, Wind, X,
 } from "lucide-react";
 import {
@@ -27,6 +28,25 @@ type WeatherData = {
   fetchedAt: string;
 };
 type ChatMessage = { role: "user" | "assistant"; content: string };
+type SpeechAlternativeLike = { transcript: string };
+type SpeechResultLike = ArrayLike<SpeechAlternativeLike> & { isFinal: boolean };
+type SpeechResultEventLike = Event & { resultIndex: number; results: ArrayLike<SpeechResultLike> };
+type SpeechErrorEventLike = Event & { error: string };
+type SpeechRecognitionLike = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechResultEventLike) => void) | null;
+  onerror: ((event: SpeechErrorEventLike) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+type SpeechRecognitionWindow = Window & {
+  SpeechRecognition?: new () => SpeechRecognitionLike;
+  webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+};
 type DiseasePrediction = { class_label: string; crop_label: string; label: string; score_percent: number };
 type DiseaseProduct = {
   name: string;
@@ -402,7 +422,7 @@ export default function HomePage() {
     <main className="app-shell">
       <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
         <div className="brand-lockup">
-          <div className="brand-mark"><Sprout size={25} strokeWidth={2.4} /></div>
+          <div className="brand-mark"><NextImage src="/brand-logo.png" alt="Agri Smart BD" width={52} height={52} priority /></div>
           <div className="brand-copy"><strong>স্মার্ট কৃষি বুদ্ধিমত্তা</strong><span>Technology should empower those who feed nations</span></div>
           <button className="icon-button close-menu" onClick={() => setMobileNav(false)} aria-label="মেনু বন্ধ করুন"><X size={19} /></button>
         </div>
@@ -579,6 +599,11 @@ function DiseaseAssistant({
   return <>
     <ScreenTitle eyebrow="ছবি দিন, প্রাথমিক সহায়তা পান" title="রোগ সহায়তা" />
     <div className="notice info-notice disease-scope-notice"><ShieldCheck size={19}/><div><strong>ছবিভিত্তিক AI প্রাথমিক যাচাই</strong><p>Qwen Vision চালু থাকলে আপনার ছবি এবং লেখা লক্ষণ (যদি দেন) বিশ্লেষণের জন্য Groq-এ পাঠানো হয়; স্থানীয় ResNet9-এর ৩৮টি PlantVillage শ্রেণি শুধু সহায়ক। ছবি থেকে ফসল/রোগ নিশ্চিত নয়—চিকিৎসার আগে লক্ষণ মিলিয়ে নিন। ব্যক্তিগত বা পরিচয়-দেখা যায় এমন ছবি দেবেন না।</p></div></div>
+    <div className="diagnosis-flow" aria-label="রোগ সহায়তা ব্যবহারের ধাপ">
+      <div><span>১</span><strong>পাতার ছবি দিন</strong></div><ChevronRight size={18} aria-hidden="true" />
+      <div><span>২</span><strong>লক্ষণ লিখুন <em>(ঐচ্ছিক)</em></strong></div><ChevronRight size={18} aria-hidden="true" />
+      <div><span>৩</span><strong>ফল মিলিয়ে দেখুন</strong></div>
+    </div>
 
     <section className="disease-layout">
       <div className="upload-card panel">
@@ -634,15 +659,15 @@ function DiseaseAssistant({
 
       <section className="panel result-card quick-prescription-card">
         <div className="panel-heading"><div><p className="section-kicker">ছোট, সরাসরি পরবর্তী পদক্ষেপ</p><h2>{healthy ? "এখনই ওষুধ নয়" : "এখন কী করবেন"}</h2></div><ShieldCheck size={21} className="muted-icon"/></div>
-        {diagnosis?.visible_signs_bn?.length ? <div className="signs-check"><strong>ছবিতে AI যে লক্ষণ দেখেছে</strong><ul>{diagnosis.visible_signs_bn.slice(0, 2).map((sign, index) => <li key={index}>{sign}</li>)}</ul></div> : <div className="signs-check"><strong>হাতে মিলিয়ে দেখুন</strong><p>{result.guidance.signs_to_check}</p></div>}
+        {diagnosis?.visible_signs_bn?.length ? <div className="signs-check"><strong><span className="detail-index">১</span>ছবিতে AI যে লক্ষণ দেখেছে</strong><ul>{diagnosis.visible_signs_bn.slice(0, 2).map((sign, index) => <li key={index}>{sign}</li>)}</ul></div> : <div className="signs-check"><strong><span className="detail-index">১</span>হাতে মিলিয়ে দেখুন</strong><p>{result.guidance.signs_to_check}</p></div>}
         {diagnosis?.leaf_status === "not_leaf" && <p className="small-caveat">পাতার পরিষ্কার ছবি দিন—এই ফলের ভিত্তিতে কোনো চিকিৎসা করবেন না।</p>}
         <div className="result-grid quick-action-grid">
-          <div><h3>করণীয়</h3><ul>{actions.map((action, index) => <li key={index}>{action}</li>)}</ul></div>
-          <div><h3>পানি</h3><p>{result.guidance.watering.care}</p><p className="small-caveat">{result.guidance.watering.amount_note}</p></div>
+          <div className="diagnosis-detail-card"><h3><span className="detail-index">২</span>করণীয়</h3><ul>{actions.map((action, index) => <li key={index}>{action}</li>)}</ul></div>
+          <div className="diagnosis-detail-card"><h3><span className="detail-index">৩</span>পানি</h3><p>{result.guidance.watering.care}</p><p className="small-caveat">{result.guidance.watering.amount_note}</p></div>
         </div>
 
         <div className={`quick-medicine ${result.guidance.products.length && !healthy && diagnosis?.leaf_status === "leaf" ? "verified-medicine" : "no-product-match"}`}>
-          <h3>{result.guidance.products.length && !healthy && diagnosis?.leaf_status === "leaf" ? "যাচাইকৃত DAE পণ্য-রেকর্ড" : "ওষুধ / সার"}</h3>
+          <h3><span className="detail-index">৪</span>{result.guidance.products.length && !healthy && diagnosis?.leaf_status === "leaf" ? "যাচাইকৃত DAE পণ্য-রেকর্ড" : "ওষুধ / সার"}</h3>
           {result.guidance.products.length && !healthy && diagnosis?.leaf_status === "leaf" ? <>
             {(() => { const product = result.guidance.products[0]; return <>
               <p className="quick-product-name"><strong>{product.name}</strong> · AP-{product.registration_no.replace(/^AP-/, "")}</p>
@@ -687,12 +712,163 @@ function DiseaseAssistant({
   </>;
 }
 
-function Chat({ messages, input, setInput, onSubmit, loading, error, districtName, setCrop, setActive }: { messages: ChatMessage[]; input: string; setInput: (value: string) => void; onSubmit: (event: FormEvent) => void; loading: boolean; error: string; districtName: string; setCrop: (value: string) => void; setActive: (value: Screen) => void }) {
+function Chat({ messages, input, setInput, onSubmit, loading, error, districtName, setCrop, setActive }: { messages: ChatMessage[]; input: string; setInput: React.Dispatch<React.SetStateAction<string>>; onSubmit: (event: FormEvent) => void; loading: boolean; error: string; districtName: string; setCrop: (value: string) => void; setActive: (value: Screen) => void }) {
   const suggestions = ["ধানের পাতায় দাগ হলে প্রথমে কী দেখব?", "বৃষ্টির আগে কীভাবে সেচ পরিকল্পনা করব?", "আলু সংরক্ষণে কী খেয়াল রাখা উচিত?"];
+  const [speechLanguage, setSpeechLanguage] = useState<"bn-BD" | "en-US">("bn-BD");
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [speechMessage, setSpeechMessage] = useState("");
+  const [interimTranscript, setInterimTranscript] = useState("");
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+
+  useEffect(() => {
+    const speechWindow = window as SpeechRecognitionWindow;
+    const supported = Boolean(speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition);
+    setSpeechSupported(supported);
+    if (!supported) setSpeechMessage("এই ব্রাউজারে speech recognition নেই। Chrome বা Edge-এ চেষ্টা করুন, অথবা লিখে পাঠান।");
+    return () => {
+      const recognition = recognitionRef.current;
+      if (recognition) {
+        recognition.onresult = null;
+        recognition.onerror = null;
+        recognition.onend = null;
+        recognition.abort();
+      }
+      recognitionRef.current = null;
+    };
+  }, []);
+
+  function chooseSpeechLanguage(language: "bn-BD" | "en-US") {
+    if (recognitionRef.current) {
+      const recognition = recognitionRef.current;
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      recognition.abort();
+      recognitionRef.current = null;
+      setListening(false);
+      setInterimTranscript("");
+    }
+    setSpeechLanguage(language);
+    setSpeechMessage(language === "bn-BD" ? "বাংলায় বলুন।" : "Speak in English.");
+  }
+
+  function toggleSpeechInput() {
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+      setSpeechMessage("কথা লেখা বন্ধ হয়েছে।");
+      return;
+    }
+
+    const speechWindow = window as SpeechRecognitionWindow;
+    const Recognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
+    if (!Recognition) {
+      setSpeechSupported(false);
+      setSpeechMessage("এই ব্রাউজারে কথা শুনে লেখার সুবিধা নেই। Chrome বা Edge-এ চেষ্টা করুন, অথবা লিখে পাঠান।");
+      return;
+    }
+
+    try {
+      const recognition = new Recognition();
+      recognition.lang = speechLanguage;
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.onresult = (event) => {
+        let finalText = "";
+        let interimText = "";
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          const transcript = event.results[index][0]?.transcript?.trim() ?? "";
+          if (!transcript) continue;
+          if (event.results[index].isFinal) finalText += `${finalText ? " " : ""}${transcript}`;
+          else interimText += `${interimText ? " " : ""}${transcript}`;
+        }
+        if (finalText) {
+          setInput((current) => `${current}${current && !/\s$/.test(current) ? " " : ""}${finalText}`);
+          setSpeechMessage("কথা থেকে লেখা যোগ হয়েছে। চাইলে আরও বলুন।");
+        }
+        setInterimTranscript(interimText);
+      };
+      recognition.onerror = (event) => {
+        const errorMessages: Record<string, string> = {
+          "not-allowed": "মাইক্রোফোন ব্যবহারের অনুমতি দিন, তারপর আবার চেষ্টা করুন।",
+          "service-not-allowed": "ব্রাউজারের speech service অনুমতি পায়নি।",
+          "audio-capture": "মাইক্রোফোন পাওয়া যায়নি। ডিভাইসের মাইক্রোফোন পরীক্ষা করুন।",
+          "no-speech": "কথা শোনা যায়নি। আবার মাইক্রোফোন চাপুন।",
+          network: "ভয়েস সেবা সংযোগ পায়নি। পরে চেষ্টা করুন বা লিখে পাঠান।",
+          "language-not-supported": "এই ভাষাটি ব্রাউজারে নেই। অন্য ভাষা বেছে নিন।",
+        };
+        setSpeechMessage(errorMessages[event.error] ?? "কথা শোনা যায়নি। আবার চেষ্টা করুন বা লিখে পাঠান।");
+        setListening(false);
+        setInterimTranscript("");
+        if (recognitionRef.current === recognition) recognitionRef.current = null;
+      };
+      recognition.onend = () => {
+        setListening(false);
+        setInterimTranscript("");
+        setSpeechMessage((message) => message.startsWith("শুনছি") || message.startsWith("Listening")
+          ? "কথা শোনা বন্ধ হয়েছে। আবার শুরু করতে মাইক্রোফোন চাপুন।"
+          : message);
+        if (recognitionRef.current === recognition) recognitionRef.current = null;
+      };
+      recognitionRef.current = recognition;
+      recognition.start();
+      setListening(true);
+      setSpeechMessage(speechLanguage === "bn-BD" ? "শুনছি… থামাতে মাইক্রোফোন বোতাম চাপুন।" : "Listening… tap the microphone button to stop.");
+    } catch {
+      recognitionRef.current = null;
+      setListening(false);
+      setSpeechMessage("মাইক্রোফোন চালু করা যায়নি। অনুমতি পরীক্ষা করে আবার চেষ্টা করুন।");
+    }
+  }
+
   return <>
     <ScreenTitle eyebrow="বাংলায় কৃষির কথা বলুন" title="AI কৃষি সহায়ক"><div className="ai-chip"><Bot size={17}/> স্মার্ট কৃষি বুদ্ধিমত্তা AI</div></ScreenTitle>
-    <section className="chat-layout"><aside className="chat-context"><div className="assistant-avatar"><Bot size={25}/></div><h2>আজ কী নিয়ে ভাবছেন?</h2><p>ফসলের সাধারণ পরিচর্যা, আবহাওয়া বুঝে পরিকল্পনা এবং লক্ষণভিত্তিক নিরাপদ পরামর্শে আমি সাহায্য করতে পারি।</p><div className="context-item"><MapPin size={17}/><span>এলাকা<strong>{districtName}</strong></span></div><div className="context-item"><ShieldCheck size={17}/><span>উত্তর ভাষা<strong>বাংলা</strong></span></div><button onClick={() => { setCrop("ধান"); setActive("advice"); }} className="quiet-link">ফসলের গাইড দেখুন <ChevronRight size={15}/></button></aside>
-      <div className="chat-panel panel"><div className="chat-head"><div><strong>স্মার্ট কৃষি বুদ্ধিমত্তা</strong><span><i className="status-dot"/> উত্তর দিতে প্রস্তুত</span></div><span>সাধারণ কৃষি সহায়তা</span></div><div className="chat-thread">{messages.map((message, index) => <div className={`message ${message.role}`} key={`${message.role}-${index}`}><div className="message-avatar">{message.role === "assistant" ? <Bot size={16}/> : <span>আপনি</span>}</div><div className={`message-bubble ${message.role}`}><MarkdownContent content={message.content}/></div></div>)}{loading && <div className="message assistant"><div className="message-avatar"><Bot size={16}/></div><p className="typing"><i/><i/><i/></p></div>}</div>{error && <div className="chat-error"><FileWarning size={16}/><span>{error}</span></div>}<div className="suggestion-row">{suggestions.map((suggestion) => <button key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}</div><form className="chat-form" onSubmit={onSubmit}><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSubmit(event); } }} placeholder="আপনার প্রশ্ন লিখুন…" rows={1}/><button aria-label="বার্তা পাঠান" disabled={!input.trim() || loading}><Send size={19}/></button></form><p className="chat-disclaimer">AI-এর পরামর্শ সাধারণ তথ্য। রোগ, সার ও বালাই ব্যবস্থাপনায় স্থানীয় কৃষি বিশেষজ্ঞের পরামর্শ নিন।</p></div>
+    <section className="chat-layout">
+      <aside className="chat-context">
+        <div className="assistant-avatar"><Bot size={25}/></div>
+        <h2>আজ কী নিয়ে ভাবছেন?</h2>
+        <p>ফসলের সাধারণ পরিচর্যা, আবহাওয়া বুঝে পরিকল্পনা এবং লক্ষণভিত্তিক নিরাপদ পরামর্শে আমি সাহায্য করতে পারি।</p>
+        <div className="context-item"><MapPin size={17}/><span>এলাকা<strong>{districtName}</strong></span></div>
+        <div className="context-item"><ShieldCheck size={17}/><span>উত্তর ভাষা<strong>বাংলা</strong></span></div>
+        <button onClick={() => { setCrop("ধান"); setActive("advice"); }} className="quiet-link">ফসলের গাইড দেখুন <ChevronRight size={15}/></button>
+      </aside>
+      <div className="chat-panel panel">
+        <div className="chat-head">
+          <div><strong>স্মার্ট কৃষি বুদ্ধিমত্তা</strong><span><i className="status-dot"/> উত্তর দিতে প্রস্তুত</span></div>
+          <span>সাধারণ কৃষি সহায়তা</span>
+        </div>
+        <div className="chat-thread">
+          {messages.map((message, index) => <div className={`message ${message.role}`} key={`${message.role}-${index}`}>
+            <div className="message-avatar">{message.role === "assistant" ? <Bot size={16}/> : <span>আপনি</span>}</div>
+            <div className={`message-bubble ${message.role}`}><MarkdownContent content={message.content}/></div>
+          </div>)}
+          {loading && <div className="message assistant"><div className="message-avatar"><Bot size={16}/></div><p className="typing"><i/><i/><i/></p></div>}
+        </div>
+        {error && <div className="chat-error" role="alert"><FileWarning size={16}/><span>{error}</span></div>}
+        <div className="suggestion-row">{suggestions.map((suggestion) => <button type="button" key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}</div>
+        <form className="chat-composer" onSubmit={onSubmit}>
+          <div className="voice-toolbar">
+            <div className="voice-language-picker" role="group" aria-label="কথার ভাষা বাছুন">
+              <span>কথার ভাষা</span>
+              <button type="button" className={speechLanguage === "bn-BD" ? "selected" : ""} aria-pressed={speechLanguage === "bn-BD"} onClick={() => chooseSpeechLanguage("bn-BD")}>বাংলা</button>
+              <button type="button" className={speechLanguage === "en-US" ? "selected" : ""} aria-pressed={speechLanguage === "en-US"} onClick={() => chooseSpeechLanguage("en-US")}>English</button>
+            </div>
+            <button type="button" className={`voice-button ${listening ? "listening" : ""}`} onClick={toggleSpeechInput} aria-pressed={listening} aria-label={listening ? "কথা শোনা বন্ধ করুন" : "কথা শুনে লিখুন"} title={speechSupported ? "বাংলা বা ইংরেজিতে বলুন" : "Speech recognition-এর জন্য Chrome বা Edge চেষ্টা করুন"}>
+              {listening ? <MicOff size={18}/> : <Mic size={18}/>}<span>{listening ? "থামান" : "বলুন ও লিখুন"}</span>
+            </button>
+          </div>
+          <div className="chat-form">
+            <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSubmit(event); } }} placeholder={speechLanguage === "bn-BD" ? "প্রশ্ন লিখুন অথবা মাইক্রোফোনে বলুন…" : "Type a question or tap the microphone to speak…"} rows={2}/>
+            <button type="submit" aria-label="বার্তা পাঠান" disabled={!input.trim() || loading}><Send size={19}/></button>
+          </div>
+          {(speechMessage || interimTranscript) && <p className={`voice-status ${listening ? "is-listening" : ""}`} aria-live="polite">
+            {interimTranscript ? `${speechLanguage === "bn-BD" ? "শুনছি" : "Listening"}: ${interimTranscript}` : speechMessage}
+          </p>}
+        </form>
+        <p className="voice-privacy-note">কথা লেখা ব্রাউজারের built-in speech recognition দিয়ে হয়—কোনো আলাদা API key বা অ্যাপ ফি নেই। কিছু ব্রাউজার অডিও তাদের speech service-এ পাঠাতে পারে; লেখা পাঠালে সেটি AI উত্তর পেতে Groq-এ যায়।</p>
+        <p className="chat-disclaimer">AI-এর পরামর্শ সাধারণ তথ্য। রোগ, সার ও বালাই ব্যবস্থাপনায় স্থানীয় কৃষি বিশেষজ্ঞের পরামর্শ নিন।</p>
+      </div>
     </section>
   </>;
 }

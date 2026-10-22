@@ -11,7 +11,8 @@ button:disabled { cursor:not-allowed; opacity:.66; }
 .app-shell { min-height:100vh; display:flex; background:linear-gradient(119deg,#f7f9f5 0%,#fbfcfa 64%,#f1f6ef 100%); }
 .sidebar { width:267px; padding:26px 17px 20px; flex:0 0 267px; background:#fbfdf9; border-right:1px solid var(--line); display:flex; flex-direction:column; position:fixed; z-index:30; min-height:100vh; top:0; left:0; }
 .brand-lockup { padding:0 11px 31px; display:flex; gap:11px; align-items:center; color:var(--deep); }
-.brand-mark { width:42px; height:42px; display:grid; place-items:center; color:#f5fbef; background:linear-gradient(145deg,#228b64,#0e503d); border-radius:14px 14px 14px 4px; box-shadow:0 8px 20px rgba(26,119,82,.22); }
+.brand-mark { width:52px; height:52px; flex:0 0 52px; overflow:hidden; background:#fff; border:1px solid #dceade; border-radius:13px; box-shadow:0 6px 18px rgba(26,119,82,.14); }
+.brand-mark img { width:100%; height:100%; display:block; object-fit:cover; }
 .brand-lockup strong { display:block; font-family:Manrope,"Hind Siliguri",sans-serif; font-size:18px; letter-spacing:-.65px; line-height:1.2; }
 .brand-lockup span { display:block; font-size:12px; color:var(--muted); margin-top:2px; }
 .sidebar-label { color:#94a099; font-size:11px; letter-spacing:.08em; font-weight:700; padding:0 12px 10px; }
@@ -202,4 +203,107 @@ h2 { font-size:20px; line-height:1.38; letter-spacing:-.45px; margin-bottom:0; }
   .advanced-result-content { padding:0 14px 16px; }
   .advanced-result-details > summary { padding:13px 15px; }
   .quick-medicine { padding:13px; }
+}
+
+/* Readable, farmer-first body type; leave page and section headings unchanged. */
+.nav-item { font-size:15px; }
+.sidebar-label,.sidebar-bottom,.side-status,.live-label { font-size:13px; }
+.brand-lockup .brand-copy span { font-size:12px; line-height:1.45; }
+.breadcrumb { font-size:14px; }
+.profile-button { font-size:14px; }
+.page-content p:not(.eyebrow):not(.section-kicker) { font-size:max(14px,1em); line-height:1.7; }
+.page-content li { font-size:max(14px,1em); line-height:1.7; }
+.page-content small { font-size:max(13px,1em); line-height:1.55; }
+.page-content label > span,.page-content th { font-size:14px; }
+.page-content td { font-size:14px; }
+.page-content button:not(.metric-card > button) { font-size:max(14px,1em); }
+.notice strong { font-size:15px; }
+.field-control select,.text-field textarea { font-size:15px; }
+.data-badge,.sample-tag,.source-label,.model-tag,.verified-tag { font-size:12px; }
+.metric-card span,.forecast-stats span,.table-head p,.market-stat span { font-size:13px; }
+.market-overview > div:first-child span,.source-strip span,.source-strip strong,.forecast-days span,.forecast-grid span,.forecast-grid em,.weather-now > article:not(.weather-main) span,.map-frame a,.legend { font-size:14px; }
+.forecast-days strong { font-size:15px; }
+.ai-chip { font-size:13px; }
+
+/* Clearer disease workflow and separated result sections. */
+.disease-scope-notice { padding:18px 20px; border-left:4px solid #68a981; }
+.diagnosis-flow { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 18px; padding:14px 18px; border:1px solid #dfeae1; border-radius:14px; background:#fff; box-shadow:0 5px 18px rgba(24,61,44,.025); }
+.diagnosis-flow > div { min-width:0; display:flex; align-items:center; gap:10px; color:#315b45; }
+.diagnosis-flow > div > span,.detail-index { width:30px; height:30px; flex:0 0 30px; display:inline-grid; place-items:center; border-radius:50%; color:#1f704f; background:#e3f2e6; font-family:Manrope,"Hind Siliguri",sans-serif; font-size:14px; font-weight:800; }
+.diagnosis-flow strong { font-size:15px; }
+.diagnosis-flow em { color:#718278; font-size:13px; font-style:normal; font-weight:500; }
+.diagnosis-flow > svg { flex:0 0 auto; color:#91b69a; }
+.disease-layout { align-items:stretch; gap:20px; }
+.upload-card,.diagnosis-card { padding:27px; }
+.upload-heading p { font-size:14px; }
+.upload-zone strong { font-size:16px; }
+.disease-drop-area .upload-zone small { font-size:14px; }
+.disease-error { font-size:14px; line-height:1.65; }
+.ai-option-card strong { font-size:15px; }
+.ai-option-card small { font-size:14px; line-height:1.6; }
+.tiny-note { align-items:flex-start; }
+.result-heading { padding:24px 26px; }
+.result-heading h2 { font-size:22px; }
+.result-cause { font-size:15px; }
+.result-score { color:#60796a; }
+.signs-check { padding:17px 18px; }
+.signs-check strong,.result-grid h3 { display:flex; align-items:center; gap:10px; color:#244f38; font-size:16px; }
+.signs-check ul,.quick-prescription-card .signs-check ul { margin-top:10px; font-size:15px; line-height:1.75; }
+.signs-check p,.result-grid p { font-size:15px; line-height:1.75; }
+.result-grid { gap:14px; }
+.diagnosis-detail-card { min-width:0; padding:17px; border:1px solid #e1ebe2; border-radius:12px; background:#f9fcf9; }
+.diagnosis-detail-card h3 { margin:0 0 10px; }
+.diagnosis-detail-card ul { margin:0; padding-left:22px; color:#405e4d; }
+.diagnosis-detail-card li { margin:5px 0; }
+.quick-medicine { padding:18px 19px; }
+.quick-medicine h3 { display:flex; align-items:center; gap:10px; font-size:16px; }
+.quick-medicine p { font-size:15px; line-height:1.7; }
+.quick-medicine .quick-product-name { font-size:16px; }
+.advanced-result-details > summary { font-size:15px; }
+.prediction-name strong,.product-card p,.product-card-heading div > span,.product-source-link,.source-links a { font-size:14px; }
+.product-card { padding:18px; }
+
+/* Free browser-native Bengali/English speech-to-text controls. */
+.chat-composer { padding:12px 20px 0; }
+.voice-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:9px; }
+.voice-language-picker { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+.voice-language-picker > span { margin-right:2px; color:#5f7468; font-size:14px; font-weight:700; }
+.voice-language-picker button,.voice-button { min-height:40px; display:inline-flex; align-items:center; justify-content:center; gap:7px; border:1px solid #dce8df; border-radius:10px; background:#fff; color:#456653; padding:0 12px; font-size:14px; font-weight:700; transition:background .15s,border-color .15s,transform .15s; }
+.voice-language-picker button:hover,.voice-button:hover { border-color:#8ebd9b; background:#f3faf4; }
+.voice-language-picker button.selected { border-color:#8dbb99; background:#e9f5eb; color:#1e6849; box-shadow:inset 0 0 0 1px #8dbb99; }
+.voice-button { min-width:132px; color:#fff; border-color:#207e5a; background:#207e5a; }
+.voice-button:hover { color:#fff; border-color:#126744; background:#126744; }
+.voice-button.listening { border-color:#a74d43; background:#b85248; animation:voice-pulse 1.5s ease-in-out infinite; }
+.voice-button.listening:hover { background:#9e443b; }
+@keyframes voice-pulse { 50% { box-shadow:0 0 0 5px rgba(184,82,72,.14); } }
+.chat-composer .chat-form { margin:0; min-height:66px; }
+.chat-composer .chat-form textarea { min-height:54px; font-size:16px; line-height:1.6; }
+.chat-composer .chat-form button { width:46px; height:46px; flex-basis:46px; }
+.voice-status { margin:8px 3px 0; min-height:22px; color:#64796c; font-size:14px; line-height:1.55; }
+.voice-status.is-listening { color:#1f754f; font-weight:700; }
+.voice-privacy-note { margin:10px 20px 0; color:#65786d; font-size:13px; line-height:1.65; }
+.chat-disclaimer { font-size:13px; line-height:1.6; }
+.message .message-bubble { font-size:15px; line-height:1.72; }
+.suggestion-row button { font-size:13px; }
+.chat-head div span,.chat-head > span { font-size:13px; }
+.context-item span { font-size:13px; }
+
+@media (max-width:860px) {
+  .diagnosis-flow { gap:8px; padding:13px; }
+  .diagnosis-flow strong { font-size:14px; }
+  .chat-composer { padding-right:16px; padding-left:16px; }
+  .voice-privacy-note { margin-right:16px; margin-left:16px; }
+}
+@media (max-width:570px) {
+  .diagnosis-flow { display:grid; grid-template-columns:1fr; gap:7px; padding:14px; }
+  .diagnosis-flow > svg { justify-self:center; transform:rotate(90deg); }
+  .upload-card,.diagnosis-card { padding:19px; }
+  .result-heading { padding:18px; }
+  .result-heading h2 { font-size:19px; }
+  .quick-medicine { padding:15px; }
+  .chat-composer { padding:10px 14px 0; }
+  .voice-toolbar { align-items:flex-start; flex-direction:column; }
+  .voice-button { width:100%; }
+  .chat-composer .chat-form textarea { font-size:16px; }
+  .voice-privacy-note { margin-right:14px; margin-left:14px; }
 }
