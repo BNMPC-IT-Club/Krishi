@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ক্ষেতসাথী | কৃষি বুদ্ধিমত্তা",
-  description: "বাংলাদেশের কৃষকদের জন্য আবহাওয়া, ফসল পরিচর্যা ও AI কৃষি সহায়তা।",
+  title: "স্মার্ট কৃষি বুদ্ধিমত্তা | Smart Krishi Buddhimotta",
+  description: "Technology should empower those who feed nations. বাংলাদেশের কৃষকদের জন্য আবহাওয়া, ফসল পরিচর্যা ও AI কৃষি সহায়তা।",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
