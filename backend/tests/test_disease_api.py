@@ -4,8 +4,10 @@ from __future__ import annotations
 import base64
 import io
 import sys
+import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy  # ensure the API's lazy import remains stable across mocked requests
@@ -24,6 +26,36 @@ def _image_data_url() -> str:
 
 
 class DiseaseApiTests(unittest.TestCase):
+    def test_local_loader_tries_original_full_checkpoint_if_compact_weights_fail(self) -> None:
+        model = type("FakeModel", (), {"eval": lambda self: self})()
+        torch_module = types.ModuleType("torch")
+        model_module = types.ModuleType("disease_model")
+        attempted: list[str] = []
+
+        def load_resnet9(path: str):
+            checkpoint_name = Path(path).name
+            attempted.append(checkpoint_name)
+            if checkpoint_name == "plant_disease_weights.pth":
+                raise ValueError("invalid compact checkpoint")
+            return model
+
+        model_module.load_resnet9 = load_resnet9
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            (repo_root / "plant_disease_weights.pth").touch()
+            (repo_root / "plant-disease-model-complete.pth").touch()
+            with patch.object(main, "_REPO_ROOT", repo_root), patch.object(
+                main, "_DISEASE_RUNTIME", None
+            ), patch.dict(sys.modules, {"torch": torch_module, "disease_model": model_module}):
+                runtime = main._load_disease_model()
+
+        self.assertEqual(
+            attempted,
+            ["plant_disease_weights.pth", "plant-disease-model-complete.pth"],
+        )
+        self.assertIs(runtime[0], model)
+        self.assertIs(runtime[1], torch_module)
+
     def _fake_model_module(self):
         module = types.ModuleType("disease_model")
         module.CLASS_LABELS = list(DISEASE_TRANSLATION)
@@ -54,9 +86,13 @@ class DiseaseApiTests(unittest.TestCase):
         fake_module = self._fake_model_module()
         with patch.dict(sys.modules, {"disease_model": fake_module}), patch.object(
             main, "_load_disease_model", side_effect=FileNotFoundError()
-        ), patch.object(main, "analyze_leaf_image", return_value=vision_response) as analyze_mock:
+        ) as local_load, patch.object(
+            main, "analyze_leaf_image", return_value=vision_response
+        ) as analyze_mock:
             result = main.disease(DiseaseRequest(image_data_url=_image_data_url(), symptom="পাতায় দাগ"))
 
+        local_load.assert_not_called()
+        self.assertEqual(analyze_mock.call_args.args[1], [])
         self.assertTrue(analyze_mock.call_args.args[0].startswith("data:image/jpeg;base64,"))
         self.assertEqual(analyze_mock.call_args.args[3], "পাতায় দাগ")
         self.assertEqual(result["diagnosis"]["source"], "groq_qwen_vision")

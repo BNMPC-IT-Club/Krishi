@@ -7,17 +7,14 @@ validated vision result plus any symptom text, never image pixels.
 from __future__ import annotations
 
 import os
-import time
 from typing import Any
 
 import requests
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 DEFAULT_MODELS = (
-    "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
-    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
 )
 
 _SYSTEM_PROMPT = (
@@ -32,54 +29,15 @@ _SYSTEM_PROMPT = (
     "ফসল–বালাই ব্যবহার মিলিয়ে দেখতে বলো।"
 )
 
-_model_cache: set[str] | None = None
-_model_cache_expiry = 0.0
-
-
 def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value.strip() for value in values if value and value.strip()))
 
 
-def candidate_models(api_key: str) -> list[str]:
-    """Prefer GPT-OSS, but use model IDs the current Groq key can see when possible."""
-    global _model_cache, _model_cache_expiry
-
-    configured = [os.getenv("GROQ_MODEL_PRIMARY", "openai/gpt-oss-120b")]
-    configured.extend(
-        os.getenv("GROQ_MODEL_FALLBACKS", "openai/gpt-oss-20b,llama-3.3-70b-versatile").split(",")
-    )
-    preferred = _unique(configured + list(DEFAULT_MODELS))
-
-    now = time.monotonic()
-    if _model_cache is None or now >= _model_cache_expiry:
-        try:
-            response = requests.get(
-                GROQ_MODELS_URL,
-                headers={"Authorization": f"Bearer {api_key}"},
-                timeout=(4, 7),
-            )
-            response.raise_for_status()
-            payload = response.json()
-            _model_cache = {
-                item["id"] for item in payload.get("data", [])
-                if isinstance(item, dict) and isinstance(item.get("id"), str)
-            }
-            _model_cache_expiry = now + 900
-        except (requests.RequestException, ValueError, TypeError, AttributeError):
-            # Discovery is an optimization; completion fallback still runs.
-            _model_cache = set()
-            _model_cache_expiry = now + 60
-
-    if _model_cache:
-        ordered = [model for model in preferred if model in _model_cache]
-        ordered.extend(sorted(
-            model for model in _model_cache
-            if model not in ordered
-            and ("gpt-oss" in model.casefold() or "llama" in model.casefold())
-        ))
-        if ordered:
-            return ordered[:3]
-    return preferred[:3]
+def candidate_models() -> list[str]:
+    """Use low-latency text models in order; POST fallback avoids a slow model-list lookup."""
+    primary = os.getenv("GROQ_MODEL_PRIMARY", DEFAULT_MODELS[0])
+    fallbacks = os.getenv("GROQ_MODEL_FALLBACKS", ",".join(DEFAULT_MODELS[1:])).split(",")
+    return _unique([primary, *fallbacks, *DEFAULT_MODELS])[:3]
 
 
 def _error_code(response: requests.Response) -> str:
@@ -119,11 +77,11 @@ def complete(messages: list[dict[str, str]], max_tokens: int = 700) -> tuple[str
         "User-Agent": "Smart-Krishi-Buddhimotta/1.0",
     }
     last_error = "unavailable"
-    for model in candidate_models(api_key):
+    for model in candidate_models():
         payload: dict[str, Any] = {"model": model, "messages": safe_messages}
         if "gpt-oss" in model.casefold():
             payload["max_completion_tokens"] = token_limit
-            payload["reasoning_effort"] = "medium"
+            payload["reasoning_effort"] = "low"
         else:
             payload["temperature"] = 0.35
             payload["max_tokens"] = token_limit
@@ -133,7 +91,7 @@ def complete(messages: list[dict[str, str]], max_tokens: int = 700) -> tuple[str
                 GROQ_CHAT_URL,
                 headers=headers,
                 json=payload,
-                timeout=(6, 30),
+                timeout=(4, 18),
             )
         except requests.Timeout:
             last_error = "timeout"

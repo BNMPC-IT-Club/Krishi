@@ -68,6 +68,10 @@ app.add_middleware(
 )
 
 CSV_PATH = _REPO_ROOT / "bd_crop_price_data.csv"
+_DISEASE_CHECKPOINT_FILES = (
+    "plant_disease_weights.pth",
+    "plant-disease-model-complete.pth",
+)
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
 MAX_IMAGE_PIXELS = 24_000_000
 BANGLA_DIGITS = str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯")
@@ -252,7 +256,11 @@ def health() -> dict[str, Any]:
         "groq_configured": bool(os.getenv("GROQ_API_KEY", "").strip()),
         "groq_vision_configured": bool(os.getenv("GROQ_API_KEY", "").strip()),
         "groq_vision_model": os.getenv("GROQ_VISION_MODEL", DEFAULT_VISION_MODEL).strip() or DEFAULT_VISION_MODEL,
-        "disease_weights_present": (_REPO_ROOT / "plant_disease_weights.pth").is_file(),
+        "disease_weights_present": any(
+            (_REPO_ROOT / filename).is_file() for filename in _DISEASE_CHECKPOINT_FILES
+        ),
+        "disease_primary_weights_present": (_REPO_ROOT / _DISEASE_CHECKPOINT_FILES[0]).is_file(),
+        "disease_fallback_checkpoint_present": (_REPO_ROOT / _DISEASE_CHECKPOINT_FILES[1]).is_file(),
     }
 
 
@@ -331,7 +339,7 @@ _DISEASE_LOAD_LOCK = threading.Lock()
 
 
 def _load_disease_model():
-    """Load the already-trained checkpoint once per process; never retrain or double-load."""
+    """Load the first usable bundled checkpoint once; never retrain or double-load."""
     global _DISEASE_RUNTIME
     if _DISEASE_RUNTIME is not None:
         return _DISEASE_RUNTIME
@@ -341,13 +349,26 @@ def _load_disease_model():
         import torch  # imported lazily so health/chat/forecast can start without inference loaded
         from disease_model import load_resnet9
 
-        weights_path = _REPO_ROOT / "plant_disease_weights.pth"
-        if not weights_path.is_file():
-            raise FileNotFoundError("plant_disease_weights.pth is missing from the repository checkout")
-        model = load_resnet9(str(weights_path))
-        model.eval()
-        _DISEASE_RUNTIME = (model, torch)
-        return _DISEASE_RUNTIME
+        present = [
+            _REPO_ROOT / filename
+            for filename in _DISEASE_CHECKPOINT_FILES
+            if (_REPO_ROOT / filename).is_file()
+        ]
+        if not present:
+            raise FileNotFoundError("No bundled PlantVillage .pth checkpoint is present")
+
+        load_errors: list[Exception] = []
+        for weights_path in present:
+            try:
+                model = load_resnet9(str(weights_path))
+                model.eval()
+            except Exception as exc:
+                load_errors.append(exc)
+                continue
+            _DISEASE_RUNTIME = (model, torch)
+            return _DISEASE_RUNTIME
+
+        raise RuntimeError("All bundled PlantVillage .pth checkpoints failed to load") from load_errors[-1]
 
 
 def _parse_image_data_url(image_data_url: str) -> bytes:
@@ -420,49 +441,52 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
         raise HTTPException(status_code=400, detail="ছবিটি পড়া যায়নি। অন্য JPG, PNG বা WebP ছবি দিন।") from None
 
-    top_predictions: list[dict[str, Any]] = []
-    local_model_error: str | None = None
-    try:
-        import numpy as np
-        from disease_model import CLASS_LABELS, predict_torch
-        model, torch = _load_disease_model()
-        pixels = np.asarray(classifier_image, dtype=np.float32) / 255.0
-        tensor = torch.from_numpy(pixels).permute(2, 0, 1).unsqueeze(0)
-        probabilities = np.asarray(predict_torch(model, tensor), dtype=np.float64)
-        if probabilities.ndim != 1 or len(probabilities) != len(CLASS_LABELS):
-            raise ValueError("model class count does not match the checkpoint")
-        probabilities = np.nan_to_num(probabilities, nan=0.0, posinf=0.0, neginf=0.0)
-        probabilities = np.clip(probabilities, 0.0, 1.0)
-        if probabilities.sum() <= 0:
-            raise ValueError("model returned no valid scores")
-        probabilities = probabilities / probabilities.sum()
-        top_indices = np.argsort(probabilities)[::-1][:3]
-        for index in top_indices:
-            label = CLASS_LABELS[int(index)]
-            crop_label, disease_label = _display_class(label)
-            top_predictions.append({
-                "class_label": label,
-                "crop_label": crop_label,
-                "label": disease_label,
-                "score_percent": round(float(probabilities[int(index)] * 100), 1),
-            })
-    except FileNotFoundError:
-        local_model_error = "weights_missing"
-    except Exception:
-        local_model_error = "inference_failed"
-
     allowed_classes = list(DISEASE_TRANSLATION.keys())
+    # Qwen is the preferred visual path. Load the heavier local runtime only
+    # when Qwen is not configured or cannot return a usable visual result.
     vision = analyze_leaf_image(
         vision_data_url,
-        top_predictions,
+        [],
         allowed_classes,
         request.symptom,
     )
     visual_result = vision.get("result") if vision.get("available") else None
 
+    top_predictions: list[dict[str, Any]] = []
+    local_model_error: str | None = None
+    if not visual_result:
+        try:
+            import numpy as np
+            from disease_model import CLASS_LABELS, predict_torch
+            model, torch = _load_disease_model()
+            pixels = np.asarray(classifier_image, dtype=np.float32) / 255.0
+            tensor = torch.from_numpy(pixels).permute(2, 0, 1).unsqueeze(0)
+            probabilities = np.asarray(predict_torch(model, tensor), dtype=np.float64)
+            if probabilities.ndim != 1 or len(probabilities) != len(CLASS_LABELS):
+                raise ValueError("model class count does not match the checkpoint")
+            probabilities = np.nan_to_num(probabilities, nan=0.0, posinf=0.0, neginf=0.0)
+            probabilities = np.clip(probabilities, 0.0, 1.0)
+            if probabilities.sum() <= 0:
+                raise ValueError("model returned no valid scores")
+            probabilities = probabilities / probabilities.sum()
+            top_indices = np.argsort(probabilities)[::-1][:3]
+            for index in top_indices:
+                label = CLASS_LABELS[int(index)]
+                crop_label, disease_label = _display_class(label)
+                top_predictions.append({
+                    "class_label": label,
+                    "crop_label": crop_label,
+                    "label": disease_label,
+                    "score_percent": round(float(probabilities[int(index)] * 100), 1),
+                })
+        except FileNotFoundError:
+            local_model_error = "weights_missing"
+        except Exception:
+            local_model_error = "inference_failed"
+
     if not top_predictions and not visual_result:
         if local_model_error == "weights_missing":
-            detail = "রোগ মডেলের ওজন নেই এবং Groq Qwen vision-ও চালু নয়। backend-এ plant_disease_weights.pth বা GROQ_API_KEY যোগ করুন।"
+            detail = "কোনো স্থানীয় .pth রোগ-মডেল নেই এবং Groq Qwen vision-ও চালু নয়। backend-এ plant_disease_weights.pth/plant-disease-model-complete.pth বা GROQ_API_KEY যোগ করুন।"
         elif vision.get("status") == "not_configured":
             detail = "Groq Qwen vision চালু নেই এবং স্থানীয় রোগ মডেলটিও ব্যবহার করা যাচ্ছে না। backend-এ GROQ_API_KEY ও/অথবা মডেল ওজন যোগ করুন।"
         else:
