@@ -1,44 +1,27 @@
-# ক্ষেতসাথী | কৃষি বুদ্ধিমত্তা
+# ক্ষেতসাথী — Smart Krishi Buddhimotta UI
 
-বাংলাদেশের কৃষকদের জন্য একটি বাংলা-প্রথম কৃষি সহায়ক ওয়েব অ্যাপ। এটি সহজ ভাষায় আবহাওয়ার পূর্বাভাস, ফসল পরিচর্যার মৌলিক নির্দেশনা, মূল্য-প্রবণতার প্রোটোটাইপ, পাতার সমস্যা নিয়ে নিরাপদ পরবর্তী পদক্ষেপ এবং AI কৃষি সহায়ক দেয়।
+This is the Next.js frontend preserved from the repository's `ui-smart-krishi-buddhimotta` main-branch UI. Its layout, styling, and **ফসল পরামর্শ** guides are retained. Server routes proxy chat, image classification, and sample-price forecasts to the Python API at `../backend/` using a server-only `BACKEND_URL`.
 
-## যা কাজ করে
-
-- ৬৪ জেলার বাংলা নাম, বিভাগ ও অবস্থানসহ জেলা নির্বাচন
-- **Open-Meteo** থেকে API key ছাড়া নির্বাচিত অবস্থানের বর্তমান আবহাওয়া ও সাত দিনের পূর্বাভাস
-- ব্রাউজারের অবস্থান অনুমতি ব্যবহার করে নিকটতম জেলা নির্বাচন এবং **OpenStreetMap**-এ সঠিক পিন
-- প্রোটোটাইপ বাজারদর ও পরীক্ষামূলক ১৪ দিনের মূল্য-প্রবণতা/পূর্বাভাস — প্রতিটি জায়গায় এটি লাইভ বা সরকারি তথ্য নয় বলে চিহ্নিত
-- ২১টি ফসলের মৌসুম, জমি, পানি ও মাঠ-পর্যায়ের সাধারণ পরিচর্যা গাইড
-- ছবি প্রিভিউ ও লক্ষণ নিয়ে নিরাপদ রোগ-সহায়তা প্রবাহ; নিশ্চিত রোগ নির্ণয়ের দাবি করে না
-- Groq-চালিত বাংলা AI সহায়ক, মডেল fallback সহ
-
-## স্থানীয়ভাবে চালানো
+## Develop locally
 
 ```bash
-npm install
-npm run dev
+npm ci
+cp .env.example .env.local
 ```
 
-তারপর `http://localhost:3000` খুলুন। ডাটাবেস হেলথচেকের জন্য `.env`-এ `DATABASE_URL` থাকা প্রয়োজন।
+Set `BACKEND_URL=http://localhost:8000` and `FRONTEND_URL=http://localhost:3000` in `.env.local`, start FastAPI from the repository root, then run:
 
-## ঐচ্ছিক AI সেটআপ (Groq)
-
-AI সহায়ক চালু করতে [Groq Console](https://console.groq.com/) থেকে API key তৈরি করে স্থানীয় `.env` ফাইলে যোগ করুন:
-
-```env
-GROQ_API_KEY=your_key_here
+```bash
+npm run dev -- --hostname 0.0.0.0
 ```
 
-Key কখনো `NEXT_PUBLIC_` ভেরিয়েবল হিসেবে দেবেন না। এটি কেবল সার্ভারের `/api/chat` route থেকে ব্যবহৃত হয়। Routeটি পর্যায়ক্রমে `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, এবং `llama-3.3-70b-versatile` চেষ্টা করে। কোনো key না থাকলে বাকি অ্যাপ ঠিকভাবে চলে এবং সেটআপ বার্তা দেখায়।
+Build checks:
 
-## তথ্যের উৎস ও সীমাবদ্ধতা
+```bash
+npm run typecheck
+npm run build
+```
 
-- আবহাওয়া: [Open-Meteo](https://open-meteo.com/) forecast API। এটি মডেলভিত্তিক পূর্বাভাস, মাঠের নিশ্চিত অবস্থা নয়।
-- মানচিত্র: [OpenStreetMap](https://www.openstreetmap.org/) embed। এর জন্য API key লাগে না। অবস্থান কাজ করতে ব্রাউজারের location permission প্রয়োজন।
-- বাজারদর: বর্তমান সংস্করণে প্রদর্শিত সিরিজ **প্রোটোটাইপ ডেটা**। এটি DAM, লাইভ, বা যাচাইকৃত স্থানীয় বাজারদর নয়। কেনাবেচা বা উৎপাদন সিদ্ধান্তে স্থানীয় বাজার ও নির্ভরযোগ্য সরকারি সূত্র যাচাই করুন।
-- মূল্য পূর্বাভাস: প্রোটোটাইপ সিরিজের পরীক্ষামূলক হিসাব; এটি কোনো প্রশিক্ষিত/যাচাইকৃত বাজার-মডেলের পূর্বাভাস নয়।
-- রোগ সহায়তা: কোনো image-classification model এই Next.js সংস্করণে সংযুক্ত নেই। ছবি কেবল ব্যবহারকারীর ডিভাইসে প্রিভিউ হয়; AI লক্ষণভিত্তিক সাধারণ পরবর্তী পদক্ষেপ দেয়। দ্রুত ছড়ানো রোগ বা বালাইয়ের ক্ষেত্রে স্থানীয় কৃষি কর্মকর্তার সহায়তা নিন।
+## Deploy
 
-## ফ্রি হোস্টিং
-
-এই Next.js অ্যাপটি Vercel, Render, বা নিজের Node.js সার্ভারে deploy করা যায়। Deployment environment variables-এ `DATABASE_URL` এবং AI ব্যবহার করতে চাইলে `GROQ_API_KEY` যোগ করুন। Open-Meteo ও OpenStreetMap-এর জন্য আলাদা key প্রয়োজন নেই।
+Use the repository-root instructions in [`../DEPLOYMENT.md`](../DEPLOYMENT.md) for Vercel, Render, Groq, Telegram webhook setup, and the limitations of free hosting. No database is required.

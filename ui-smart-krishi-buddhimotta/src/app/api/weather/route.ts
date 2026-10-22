@@ -6,7 +6,7 @@ export async function GET(request: NextRequest) {
   const lat = numericParam(request.nextUrl.searchParams.get("lat"));
   const lng = numericParam(request.nextUrl.searchParams.get("lng"));
 
-  if (lat === null || lng === null || lat < 20 || lat > 27 || lng < 88 || lng > 93) {
+  if (lat === null || lng === null || lat < 20.3 || lat > 26.9 || lng < 88 || lng > 93.7) {
     return NextResponse.json({ error: "বাংলাদেশের একটি বৈধ অবস্থান নির্বাচন করুন।" }, { status: 400 });
   }
 

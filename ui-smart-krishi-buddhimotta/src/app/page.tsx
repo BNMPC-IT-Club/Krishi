@@ -25,6 +25,54 @@ type WeatherData = {
   fetchedAt: string;
 };
 type ChatMessage = { role: "user" | "assistant"; content: string };
+type PricePoint = { day: string; price: number };
+type PriceApiResponse = {
+  history: PricePoint[];
+  forecast: PricePoint[];
+  source: string;
+  sample_data_as_of?: string;
+  data_kind?: string;
+  note?: string;
+};
+
+async function fileToJpegDataUrl(file: File): Promise<string> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = objectUrl;
+    await image.decode();
+    if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth * image.naturalHeight > 24_000_000) {
+      throw new Error("ছবির রেজোলিউশন কমিয়ে আবার চেষ্টা করুন।");
+    }
+    let maxDimension = 1280;
+    let quality = 0.86;
+    let blob: Blob | null = null;
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("ছবি প্রস্তুত করা যাচ্ছে না।");
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+      if (blob && blob.size <= 1_850_000) break;
+      maxDimension = Math.max(560, Math.round(maxDimension * 0.8));
+      quality = Math.max(0.55, quality - 0.07);
+    }
+    if (!blob || blob.size > 2 * 1024 * 1024) throw new Error("ছবিটি ছোট করে আবার চেষ্টা করুন।");
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("ছবির তথ্য পড়া যায়নি।"));
+      reader.onerror = () => reject(new Error("ছবির তথ্য পড়া যায়নি।"));
+      reader.readAsDataURL(blob);
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
 
 const navigation: Array<{ id: Screen; label: string; icon: typeof Sprout }> = [
   { id: "dashboard", label: "ড্যাশবোর্ড", icon: Sprout },
@@ -74,15 +122,20 @@ export default function HomePage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState("");
   const [plantImage, setPlantImage] = useState<string | null>(null);
+  const [plantFile, setPlantFile] = useState<File | null>(null);
   const [plantFileName, setPlantFileName] = useState("");
   const [symptom, setSymptom] = useState("");
   const [diseaseAdvice, setDiseaseAdvice] = useState("");
   const [diseaseLoading, setDiseaseLoading] = useState(false);
+  const [priceData, setPriceData] = useState<PriceApiResponse | null>(null);
+  const [priceLoading, setPriceLoading] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const selectedDistrict = districts.find((item) => item.name === districtName) ?? districts[0];
-  const history = useMemo(() => createPriceHistory(crop, districtName), [crop, districtName]);
-  const forecast = useMemo(() => createForecast(crop, districtName), [crop, districtName]);
+  const localHistory = useMemo(() => createPriceHistory(crop, districtName), [crop, districtName]);
+  const localForecast = useMemo(() => createForecast(crop, districtName), [crop, districtName]);
+  const history = priceData?.history ?? localHistory;
+  const forecast = priceData?.forecast ?? localForecast;
+  const forecastSource = priceData?.source ?? "স্থানীয় প্রোটোটাইপ সিমুলেশন · Python API অনুপলব্ধ";
   const latestPrice = history.at(-1)?.price ?? 0;
   const priceChange = latestPrice - (history.at(-2)?.price ?? latestPrice);
   const chartData = useMemo(() => [
@@ -111,6 +164,35 @@ export default function HomePage() {
     return () => controller.abort();
   }, [coordinates]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    setPriceData(null);
+    setPriceLoading(true);
+    async function getPriceForecast() {
+      const query = new URLSearchParams({ district: districtName, crop });
+      try {
+        const response = await fetch(`/api/forecast?${query.toString()}`, { signal: controller.signal, cache: "no-store" });
+        const data = await response.json() as PriceApiResponse & { error?: string };
+        if (!response.ok || !Array.isArray(data.history) || !Array.isArray(data.forecast) || !data.source) {
+          throw new Error(data.error ?? "নমুনা পূর্বাভাস পাওয়া যায়নি।");
+        }
+        setPriceData(data);
+      } catch {
+        if (!controller.signal.aborted) setPriceData(null);
+      } finally {
+        if (!controller.signal.aborted) setPriceLoading(false);
+      }
+    }
+    void getPriceForecast();
+    return () => controller.abort();
+  }, [districtName, crop]);
+
+  useEffect(() => {
+    return () => {
+      if (plantImage) URL.revokeObjectURL(plantImage);
+    };
+  }, [plantImage]);
+
   function selectDistrict(name: string) {
     const district = districts.find((item) => item.name === name) ?? districts[0];
     setDistrictName(district.name);
@@ -127,6 +209,11 @@ export default function HomePage() {
     setLocationMessage("আপনার ডিভাইস থেকে অবস্থান নেওয়া হচ্ছে…");
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
+        if (coords.latitude < 20.3 || coords.latitude > 26.9 || coords.longitude < 88 || coords.longitude > 93.7) {
+          setLocationMessage("অবস্থানটি বাংলাদেশের সীমানার বাইরে। তালিকা থেকে বাংলাদেশের জেলা বেছে নিন।");
+          setLocating(false);
+          return;
+        }
         const nearby = nearestDistrict(coords.latitude, coords.longitude);
         setCoordinates({ lat: coords.latitude, lng: coords.longitude, source: "device" });
         setDistrictName(nearby.name);
@@ -172,29 +259,49 @@ export default function HomePage() {
   function onPlantImage(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith("image/") || file.size > 8 * 1024 * 1024) {
+    const supportedTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!supportedTypes.includes(file.type) || file.size > 8 * 1024 * 1024) {
+      setPlantFile(null);
+      setPlantImage(null);
+      setPlantFileName("");
       setDiseaseAdvice("অনুগ্রহ করে ৮ এমবি-র মধ্যে একটি পরিষ্কার JPG, PNG বা WebP ছবি দিন।");
+      event.target.value = "";
       return;
     }
-    if (plantImage) URL.revokeObjectURL(plantImage);
+    setPlantFile(file);
     setPlantImage(URL.createObjectURL(file));
     setPlantFileName(file.name);
     setDiseaseAdvice("");
+    event.target.value = "";
   }
 
   async function getDiseaseAdvice() {
-    if (!plantImage) {
+    if (!plantImage || !plantFile) {
       setDiseaseAdvice("আগে আক্রান্ত পাতার একটি পরিষ্কার ছবি যোগ করুন।");
       return;
     }
     setDiseaseLoading(true);
     setDiseaseAdvice("");
     try {
-      const question = `আমি ${crop} ফসলের পাতার একটি ছবি তুলেছি। চোখে দেখা লক্ষণ: ${symptom || "লক্ষণ লেখা হয়নি"}। ছবি ছাড়া নিশ্চিত রোগ নির্ণয় না করে, মাঠে যাচাইয়ের জন্য নিরাপদ ও বাস্তবসম্মত পরবর্তী পদক্ষেপ বলুন।`;
-      const answer = await requestAssistant([{ role: "user", content: question }], "এটি ছবি-সমর্থিত নিশ্চিত রোগ নির্ণয় নয়। ব্যবহারকারী কেবল ফাইলের স্থানীয় প্রিভিউ দিয়েছেন; AI-কে ছবির বিষয়বস্তু দেখা হয়েছে বলে দাবি করতে নিষেধ করা হলো।");
-      setDiseaseAdvice(answer);
+      const imageData = await fileToJpegDataUrl(plantFile);
+      const response = await fetch("/api/disease", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_data_url: imageData, crop, symptom }),
+      });
+      const data = await response.json() as {
+        error?: string;
+        prediction?: { crop_label: string; label: string; score_percent: number };
+        scope_warning?: string;
+        summary?: string;
+      };
+      if (!response.ok || !data.prediction) throw new Error(data.error ?? "ছবি বিশ্লেষণ করা যায়নি।");
+      const prediction = data.prediction;
+      setDiseaseAdvice(
+        `ছবির মডেল-ভিত্তিক ফল: ${prediction.crop_label} — ${prediction.label} (${formatBnNumber(prediction.score_percent, 1)}%)\n\n${data.scope_warning ?? "মডেল স্কোর নিশ্চিত রোগনির্ণয় নয়।"}\n\n${data.summary ?? "ঐচ্ছিক AI সারাংশ পাওয়া যায়নি।"}\n\nনোট: মডেল স্কোর ক্যালিব্রেটেড সম্ভাবনা নয়; ফলাফল কৃষি বিশেষজ্ঞের রোগনির্ণয়ের বিকল্প নয়।`,
+      );
     } catch (error) {
-      setDiseaseAdvice(error instanceof Error ? error.message : "এখন পরামর্শ আনা যাচ্ছে না।");
+      setDiseaseAdvice(error instanceof Error ? error.message : "এখন ছবি বিশ্লেষণ করা যাচ্ছে না।");
     } finally {
       setDiseaseLoading(false);
     }
@@ -242,7 +349,7 @@ export default function HomePage() {
             latestPrice={latestPrice} priceChange={priceChange} history={history}
           />}
           {active === "market" && <MarketPrice districtName={districtName} crop={crop} selectDistrict={selectDistrict} setCrop={setCrop} history={history} />}
-          {active === "forecast" && <Forecast districtName={districtName} crop={crop} selectDistrict={selectDistrict} setCrop={setCrop} latestPrice={latestPrice} forecast={forecast} chartData={chartData} />}
+          {active === "forecast" && <Forecast districtName={districtName} crop={crop} selectDistrict={selectDistrict} setCrop={setCrop} latestPrice={latestPrice} forecast={forecast} chartData={chartData} forecastSource={forecastSource} priceLoading={priceLoading} />}
           {active === "weather" && <Weather
             districtName={districtName} coordinates={coordinates} weather={weather} loading={weatherLoading} error={weatherError}
             selectDistrict={selectDistrict} detectLocation={detectLocation} locating={locating} locationMessage={locationMessage}
@@ -299,20 +406,20 @@ function MarketPrice({ districtName, crop, selectDistrict, setCrop, history }: {
   return <>
     <ScreenTitle eyebrow="প্রোটোটাইপ বাজার তথ্য" title="আজকের বাজারদর"><div className="screen-filters"><DistrictSelect value={districtName} onChange={selectDistrict} /><CropSelect value={crop} onChange={setCrop} /></div></ScreenTitle>
     <div className="notice info-notice"><FileWarning size={19}/><div><strong>স্বচ্ছতা নোট</strong><p>এখানের দামগুলো ডেমো/প্রোটোটাইপ ডেটা, লাইভ বা সরকারি বাজারদর নয়। কেনাবেচার আগে স্থানীয় বাজার ও নির্ভরযোগ্য উৎসে যাচাই করুন।</p></div></div>
-    <section className="market-overview"><div><p className="section-kicker">নির্বাচিত বাজার এলাকা</p><h2>{districtName} জেলা</h2><span>প্রতি কেজি · নমুনা তথ্য · ২১ মার্চ ২০২৬</span></div><div className="market-stat"><span>নির্বাচিত পণ্য</span><strong>{crop}</strong></div><div className="market-stat"><span>সর্বশেষ নমুনা মূল্য</span><strong>৳ {formatBnNumber(history.at(-1)?.price ?? 0, 1)}</strong></div></section>
-    <section className="market-table panel"><div className="table-head"><div><h2>প্রয়োজনীয় পণ্যের তালিকা</h2><p>একই পণ্যের পুনরাবৃত্তি ছাড়া একটি সংক্ষিপ্ত তুলনা</p></div><span className="data-badge">নমুনা ডেটা</span></div><div className="table-scroll"><table><thead><tr><th>পণ্য</th><th>নমুনা মূল্য</th><th>একক</th><th>প্রবণতা</th><th>তথ্যের ধরন</th></tr></thead><tbody>{displayed.map((item, index) => { const price = createPriceHistory(item, districtName).at(-1)?.price ?? 0; const delta = price - (createPriceHistory(item, districtName).at(-2)?.price ?? price); return <tr key={item}><td><span className="commodity-icon"><Leaf size={15}/></span>{item}</td><td className="price-cell">৳ {formatBnNumber(price, 1)}</td><td>প্রতি কেজি</td><td><span className={delta >= 0 ? "trend-up" : "trend-down"}>{delta >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>} {formatBnNumber(Math.abs(delta), 1)}</span></td><td><span className="sample-tag">প্রোটোটাইপ</span></td></tr>; })}</tbody></table></div></section>
+    <section className="market-overview"><div><p className="section-kicker">নির্বাচিত বাজার এলাকা</p><h2>{districtName} জেলা</h2><span>প্রতি কেজি · সিমুলেটেড নমুনা · লাইভ নয়</span></div><div className="market-stat"><span>নির্বাচিত পণ্য</span><strong>{crop}</strong></div><div className="market-stat"><span>সর্বশেষ নমুনা মূল্য</span><strong>৳ {formatBnNumber(history.at(-1)?.price ?? 0, 1)}</strong></div></section>
+    <section className="market-table panel"><div className="table-head"><div><h2>প্রয়োজনীয় পণ্যের তালিকা</h2><p>একই পণ্যের পুনরাবৃত্তি ছাড়া একটি সংক্ষিপ্ত তুলনা</p></div><span className="data-badge">নমুনা ডেটা</span></div><div className="table-scroll"><table><thead><tr><th>পণ্য</th><th>নমুনা মূল্য</th><th>একক</th><th>প্রবণতা</th><th>তথ্যের ধরন</th></tr></thead><tbody>{displayed.map((item) => { const itemHistory = item === crop ? history : createPriceHistory(item, districtName); const price = itemHistory.at(-1)?.price ?? 0; const delta = price - (itemHistory.at(-2)?.price ?? price); return <tr key={item}><td><span className="commodity-icon"><Leaf size={15}/></span>{item}</td><td className="price-cell">৳ {formatBnNumber(price, 1)}</td><td>প্রতি কেজি</td><td><span className={delta >= 0 ? "trend-up" : "trend-down"}>{delta >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>} {formatBnNumber(Math.abs(delta), 1)}</span></td><td><span className="sample-tag">প্রোটোটাইপ</span></td></tr>; })}</tbody></table></div></section>
     <div className="source-strip"><ShieldCheck size={19}/><div><strong>লাইভ ডেটা সংযোগের পরিকল্পনা</strong><span>সরকারি/বিশ্বস্ত উৎস নির্ভরযোগ্যভাবে পাওয়া গেলে উৎস, রিপোর্টের তারিখ এবং হালনাগাদের সময় আলাদাভাবে দেখানো হবে।</span></div></div>
   </>;
 }
 
-function Forecast({ districtName, crop, selectDistrict, setCrop, latestPrice, forecast, chartData }: { districtName: string; crop: string; selectDistrict: (value: string) => void; setCrop: (value: string) => void; latestPrice: number; forecast: Array<{ day: string; price: number }>; chartData: Array<{ day: string; observed?: number; projected?: number }> }) {
+function Forecast({ districtName, crop, selectDistrict, setCrop, latestPrice, forecast, chartData, forecastSource, priceLoading }: { districtName: string; crop: string; selectDistrict: (value: string) => void; setCrop: (value: string) => void; latestPrice: number; forecast: Array<{ day: string; price: number }>; chartData: Array<{ day: string; observed?: number; projected?: number }>; forecastSource: string; priceLoading: boolean }) {
   const predictedAverage = forecast.reduce((sum, item) => sum + item.price, 0) / forecast.length;
   const delta = predictedAverage - latestPrice;
   return <>
     <ScreenTitle eyebrow="পরীক্ষামূলক মূল্য বিশ্লেষণ" title="মূল্য পূর্বাভাস"><div className="screen-filters"><DistrictSelect value={districtName} onChange={selectDistrict}/><CropSelect value={crop} onChange={setCrop}/></div></ScreenTitle>
-    <div className="notice warning-notice"><Gauge size={19}/><div><strong>পূর্বাভাস, প্রতিশ্রুতি নয়</strong><p>এই অংশ প্রোটোটাইপ বাজার ধারার ওপর তৈরি পরীক্ষামূলক হিসাব। বাস্তব বিক্রয়, মজুদ বা চাষের সিদ্ধান্ত নেওয়ার আগে স্থানীয় বাজার ও কৃষি কর্মকর্তার তথ্য যাচাই করুন।</p></div></div>
-    <section className="forecast-stats"><article><span>সাম্প্রতিক নমুনা মূল্য</span><strong>৳ {formatBnNumber(latestPrice, 1)}</strong><small>প্রতি কেজি</small></article><article><span>১৪ দিনের গড় পূর্বাভাস</span><strong>৳ {formatBnNumber(predictedAverage, 1)}</strong><small>প্রতি কেজি</small></article><article><span>সম্ভাব্য পরিবর্তন</span><strong className={delta >= 0 ? "positive-text" : "negative-text"}>{delta >= 0 ? "+" : ""}{formatBnNumber(delta, 1)} টাকা</strong><small>সাম্প্রতিক নমুনা দামের তুলনায়</small></article></section>
-    <section className="panel forecast-chart"><div className="panel-heading"><div><p className="section-kicker">{districtName} · {crop}</p><h2>পর্যবেক্ষণ ও পূর্বাভাস</h2></div><div className="legend"><span><i className="observed-dot"/>পর্যবেক্ষিত নমুনা</span><span><i className="forecast-dot"/>পরীক্ষামূলক পূর্বাভাস</span></div></div><ResponsiveContainer width="100%" height={330}><LineChart data={chartData} margin={{ top: 10, right: 6, left: -20, bottom: 0 }}><CartesianGrid stroke="#edf1ed" vertical={false}/><XAxis dataKey="day" tickLine={false} axisLine={false} tick={{ fill: "#728177", fontSize: 11 }} interval={2}/><YAxis tickLine={false} axisLine={false} tick={{ fill: "#728177", fontSize: 11 }}/><Tooltip formatter={(value) => [`৳ ${formatBnNumber(Number(value), 1)}`, ""]} contentStyle={{ borderRadius: 12, border: "1px solid #e1e9e4" }}/><Line type="monotone" dataKey="observed" name="পর্যবেক্ষণ" stroke="#218a63" strokeWidth={3} dot={false} activeDot={{ r: 5 }}/><Line type="monotone" dataKey="projected" name="পূর্বাভাস" stroke="#d68b2a" strokeWidth={3} strokeDasharray="7 5" dot={false} activeDot={{ r: 5 }}/></LineChart></ResponsiveContainer></section>
+    <div className="notice warning-notice"><Gauge size={19}/><div><strong>পূর্বাভাস, প্রতিশ্রুতি নয়</strong><p>এটি সংযুক্ত নমুনা CSV বা ডেমো ভিত্তিতে তৈরি সিমুলেশন—লাইভ বা সরকারি বাজারদর নয়। CSV-র রেকর্ড ২০২৫ সালের মে মাসের পরে নেই; চার্টের তারিখ ও ১৪ দিনের রেখা বর্তমান বাজারের পর্যবেক্ষণ বা যাচাইকৃত পূর্বাভাস নয়। কেনাবেচার আগে স্থানীয় বাজার ও কৃষি কর্মকর্তার তথ্য যাচাই করুন।</p></div></div>
+    <section className="forecast-stats"><article><span>সাম্প্রতিক নমুনা মূল্য</span><strong>৳ {formatBnNumber(latestPrice, 1)}</strong><small>{priceLoading ? "সার্ভার থেকে নমুনা আনা হচ্ছে…" : forecastSource}</small></article><article><span>১৪ দিনের গড় পূর্বাভাস</span><strong>৳ {formatBnNumber(predictedAverage, 1)}</strong><small>প্রতি কেজি</small></article><article><span>সম্ভাব্য পরিবর্তন</span><strong className={delta >= 0 ? "positive-text" : "negative-text"}>{delta >= 0 ? "+" : ""}{formatBnNumber(delta, 1)} টাকা</strong><small>সাম্প্রতিক নমুনা দামের তুলনায়</small></article></section>
+    <section className="panel forecast-chart"><div className="panel-heading"><div><p className="section-kicker">{districtName} · {crop}</p><h2>পর্যবেক্ষণ ও পূর্বাভাস</h2></div><div className="legend"><span><i className="observed-dot"/>CSV/ডেমো সিমুলেশন</span><span><i className="forecast-dot"/>পরীক্ষামূলক পূর্বাভাস</span></div></div><ResponsiveContainer width="100%" height={330}><LineChart data={chartData} margin={{ top: 10, right: 6, left: -20, bottom: 0 }}><CartesianGrid stroke="#edf1ed" vertical={false}/><XAxis dataKey="day" tickLine={false} axisLine={false} tick={{ fill: "#728177", fontSize: 11 }} interval={2}/><YAxis tickLine={false} axisLine={false} tick={{ fill: "#728177", fontSize: 11 }}/><Tooltip formatter={(value) => [`৳ ${formatBnNumber(Number(value), 1)}`, ""]} contentStyle={{ borderRadius: 12, border: "1px solid #e1e9e4" }}/><Line type="monotone" dataKey="observed" name="পর্যবেক্ষণ" stroke="#218a63" strokeWidth={3} dot={false} activeDot={{ r: 5 }}/><Line type="monotone" dataKey="projected" name="পূর্বাভাস" stroke="#d68b2a" strokeWidth={3} strokeDasharray="7 5" dot={false} activeDot={{ r: 5 }}/></LineChart></ResponsiveContainer></section>
     <section className="forecast-days">{forecast.slice(0, 7).map((item, index) => <div key={item.day} className={index === 0 ? "today" : ""}><span>{index === 0 ? "আগামীকাল" : item.day}</span><strong>৳ {formatBnNumber(item.price, 1)}</strong><small>প্রতি কেজি</small></div>)}</section>
   </>;
 }
@@ -336,7 +443,7 @@ function Weather({ districtName, coordinates, weather, loading, error, selectDis
 function DiseaseAssistant({ crop, setCrop, plantImage, plantFileName, fileInput, onImage, symptom, setSymptom, advice, loading, getAdvice }: { crop: string; setCrop: (value: string) => void; plantImage: string | null; plantFileName: string; fileInput: React.RefObject<HTMLInputElement | null>; onImage: (event: ChangeEvent<HTMLInputElement>) => void; symptom: string; setSymptom: (value: string) => void; advice: string; loading: boolean; getAdvice: () => void }) {
   return <>
     <ScreenTitle eyebrow="সতর্ক ও ব্যবহারযোগ্য সহায়তা" title="পাতার সমস্যা বুঝতে সহায়তা"><CropSelect value={crop} onChange={setCrop}/></ScreenTitle>
-    <div className="notice info-notice"><ShieldCheck size={19}/><div><strong>নিরাপদ মূল্যায়ন</strong><p>এখানে ছবি আপনার ডিভাইসেই প্রিভিউ করা হয়। বর্তমান সংস্করণে ছবির স্বয়ংক্রিয় রোগ শনাক্তকরণ মডেল সংযুক্ত নেই; লক্ষণভিত্তিক AI পরামর্শ নিশ্চিত রোগ নির্ণয় নয়।</p></div></div>
+    <div className="notice info-notice"><ShieldCheck size={19}/><div><strong>নিরাপদ মূল্যায়ন</strong><p>ছবিটি সার্ভারে পাঠিয়ে আগে থেকে প্রশিক্ষিত ৩৮-শ্রেণির ResNet9 মডেলে বিশ্লেষণ করা হবে; মডেলটি নির্দিষ্ট PlantVillage ফসলেই সীমিত, সব বাংলাদেশি ফসল বা রোগে নয়। ঐচ্ছিক Groq সারাংশে ছবির বদলে শুধু মডেল-লেবেল ও আপনার লেখা লক্ষণ পাঠানো হয়। স্কোর নিশ্চিত রোগনির্ণয় নয়।</p></div></div>
     <section className="disease-layout"><div className="upload-card panel"><div className="upload-heading"><div className="metric-icon green"><ScanLine size={22}/></div><div><h2>পাতার ছবি যোগ করুন</h2><p>ভালো আলোতে, আক্রান্ত অংশটি কাছে থেকে তুলুন</p></div></div><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" onChange={onImage} hidden/>{plantImage ? <div className="image-preview"><img src={plantImage} alt="আপলোড করা পাতার প্রিভিউ"/><button onClick={() => fileInput.current?.click()}><Upload size={15}/> ছবি বদলান</button><span>{plantFileName}</span></div> : <button className="upload-zone" onClick={() => fileInput.current?.click()}><span className="upload-icon"><Upload size={25}/></span><strong>ছবি নির্বাচন করুন</strong><small>JPG, PNG বা WebP · সর্বোচ্চ ৮ এমবি</small></button>}</div>
       <div className="diagnosis-card panel"><div className="panel-heading"><div><p className="section-kicker">লক্ষণ লিখুন</p><h2>প্রাথমিক মাঠ-পরামর্শ</h2></div><Bug size={23} className="muted-icon"/></div><label className="text-field"><span>আপনি কী দেখতে পাচ্ছেন?</span><textarea value={symptom} onChange={(event) => setSymptom(event.target.value)} placeholder="যেমন: পাতায় বাদামি দাগ, কুঁকড়ে যাচ্ছে, গাছ দুর্বল দেখাচ্ছে…" rows={5}/></label><button className="primary-button full-width" onClick={getAdvice} disabled={loading}>{loading ? <LoaderCircle size={17} className="spin"/> : <Sparkles size={17}/>} {loading ? "পরামর্শ তৈরি হচ্ছে" : "AI সহায়তা নিন"}</button><p className="tiny-note"><ShieldCheck size={14}/> জরুরি বা দ্রুত ছড়িয়ে পড়া সমস্যায় নিকটস্থ কৃষি অফিসে নমুনাসহ যোগাযোগ করুন।</p></div></section>
     {advice && <section className="advice-response"><Bot size={21}/><div><p className="section-kicker">ক্ষেতসাথীর পরামর্শ</p><div className="rich-text">{advice}</div></div></section>}

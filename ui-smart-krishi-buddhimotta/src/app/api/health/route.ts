@@ -1,13 +1,19 @@
-import { db } from "@/db";
-import { sql } from "drizzle-orm";
-
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const baseUrl = process.env.BACKEND_URL?.trim().replace(/\/+$/, "");
+  if (!baseUrl) {
+    return Response.json({ ok: true, backend: "not-configured" });
+  }
   try {
-    await db.execute(sql`select 1`);
-    return Response.json({ ok: true });
+    const response = await fetch(`${baseUrl}/health`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+    });
+    const result = await response.json().catch(() => ({})) as { ok?: boolean };
+    return Response.json({ ok: true, backend: response.ok && result.ok ? "available" : "unavailable" });
   } catch {
-    return Response.json({ ok: false }, { status: 500 });
+    // The UI itself can still run without the optional Python service.
+    return Response.json({ ok: true, backend: "unavailable" });
   }
 }
