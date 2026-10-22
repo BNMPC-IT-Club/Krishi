@@ -1,15 +1,17 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bot, Bug, CalendarDays, ChevronRight, CloudDrizzle, CloudRain, CloudSun, Crosshair,
-  Droplets, FileWarning, Gauge, Leaf, LoaderCircle, Map, MapPin, Menu, MessageCircle,
+  Bot, Bug, CalendarDays, Camera, ChevronRight, CloudDrizzle, CloudRain, CloudSun, Crosshair,
+  Droplets, FileWarning, Gauge, ImagePlus, Leaf, LoaderCircle, Map, MapPin, Menu, MessageCircle,
   MoveUpRight, Navigation, ScanLine, Send, ShieldCheck, ShoppingBasket, Sparkles,
   Sprout, ThermometerSun, TrendingDown, TrendingUp, Upload, Wind, X,
 } from "lucide-react";
 import {
   Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   cropGuides, createForecast, createPriceHistory, crops, districts, formatBnNumber, nearestDistrict,
 } from "@/lib/agri-data";
@@ -25,6 +27,38 @@ type WeatherData = {
   fetchedAt: string;
 };
 type ChatMessage = { role: "user" | "assistant"; content: string };
+type DiseasePrediction = { class_label: string; crop_label: string; label: string; score_percent: number };
+type DiseaseProduct = {
+  name: string;
+  registration_no: string;
+  active_ingredients: string;
+  label_scope: string;
+  rate: string;
+  directions: string[];
+  source_label: string;
+  source_url: string;
+};
+type DiseaseGuidance = {
+  category: string;
+  reason: string;
+  signs_to_check: string;
+  actions: string[];
+  product_note: string;
+  products: DiseaseProduct[];
+  watering: { care: string; amount_note: string };
+  source_checked_on: string;
+  sources: Array<{ label: string; url: string }>;
+};
+type DiseaseResponse = {
+  prediction: DiseasePrediction;
+  top_predictions: DiseasePrediction[];
+  scope_warning: string;
+  guidance: DiseaseGuidance;
+  summary?: string | null;
+  summary_requested: boolean;
+  summary_available: boolean;
+  summary_error_code?: string | null;
+};
 type PricePoint = { day: string; price: number };
 type PriceApiResponse = {
   history: PricePoint[];
@@ -40,7 +74,11 @@ async function fileToJpegDataUrl(file: File): Promise<string> {
   try {
     const image = new Image();
     image.src = objectUrl;
-    await image.decode();
+    try {
+      await image.decode();
+    } catch {
+      throw new Error("এই ছবিটি ব্রাউজারে পড়া যাচ্ছে না। JPG, PNG বা WebP ছবিতে আবার চেষ্টা করুন।");
+    }
     if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth * image.naturalHeight > 24_000_000) {
       throw new Error("ছবির রেজোলিউশন কমিয়ে আবার চেষ্টা করুন।");
     }
@@ -116,7 +154,7 @@ export default function HomePage() {
   const [locationMessage, setLocationMessage] = useState("জেলা নির্বাচন করে বা নিজের অবস্থান থেকে পূর্বাভাস দেখুন");
   const [mobileNav, setMobileNav] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { role: "assistant", content: "আসসালামু আলাইকুম। আমি ক্ষেতসাথী। ফসল, আবহাওয়া বা পরিচর্যা নিয়ে প্রশ্ন করতে পারেন।" },
+    { role: "assistant", content: "আসসালামু আলাইকুম। আমি স্মার্ট কৃষি বুদ্ধিমত্তা। ফসল, আবহাওয়া বা পরিচর্যা নিয়ে প্রশ্ন করতে পারেন।" },
   ]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
@@ -125,11 +163,17 @@ export default function HomePage() {
   const [plantFile, setPlantFile] = useState<File | null>(null);
   const [plantFileName, setPlantFileName] = useState("");
   const [symptom, setSymptom] = useState("");
-  const [diseaseAdvice, setDiseaseAdvice] = useState("");
+  const [diseaseResult, setDiseaseResult] = useState<DiseaseResponse | null>(null);
+  const [diseaseError, setDiseaseError] = useState("");
   const [diseaseLoading, setDiseaseLoading] = useState(false);
+  const [includeAiExplanation, setIncludeAiExplanation] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const [priceData, setPriceData] = useState<PriceApiResponse | null>(null);
   const [priceLoading, setPriceLoading] = useState(true);
-  const fileInput = useRef<HTMLInputElement>(null);
+  const galleryInput = useRef<HTMLInputElement>(null);
+  const cameraInput = useRef<HTMLInputElement>(null);
+  const diseaseAbort = useRef<AbortController | null>(null);
+  const diseaseRequestId = useRef(0);
 
   const localHistory = useMemo(() => createPriceHistory(crop, districtName), [crop, districtName]);
   const localForecast = useMemo(() => createForecast(crop, districtName), [crop, districtName]);
@@ -192,6 +236,8 @@ export default function HomePage() {
       if (plantImage) URL.revokeObjectURL(plantImage);
     };
   }, [plantImage]);
+
+  useEffect(() => () => diseaseAbort.current?.abort(), []);
 
   function selectDistrict(name: string) {
     const district = districts.find((item) => item.name === name) ?? districts[0];
@@ -256,55 +302,80 @@ export default function HomePage() {
     }
   }
 
-  function onPlantImage(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const supportedTypes = ["image/jpeg", "image/png", "image/webp"];
-    if (!supportedTypes.includes(file.type) || file.size > 8 * 1024 * 1024) {
-      setPlantFile(null);
-      setPlantImage(null);
-      setPlantFileName("");
-      setDiseaseAdvice("অনুগ্রহ করে ৮ এমবি-র মধ্যে একটি পরিষ্কার JPG, PNG বা WebP ছবি দিন।");
-      event.target.value = "";
+  async function analyzePlantFile(file: File) {
+    const supportedImage = file.type.startsWith("image/") && file.type !== "image/svg+xml";
+    if (!supportedImage || file.size > 8 * 1024 * 1024) {
+      setDiseaseError("৮ এমবি-র মধ্যে JPG, PNG, WebP বা ব্রাউজারে পড়া যায় এমন ছবি দিন।");
       return;
     }
+
+    diseaseAbort.current?.abort();
+    const requestId = diseaseRequestId.current + 1;
+    diseaseRequestId.current = requestId;
+    const controller = new AbortController();
+    diseaseAbort.current = controller;
     setPlantFile(file);
     setPlantImage(URL.createObjectURL(file));
-    setPlantFileName(file.name);
-    setDiseaseAdvice("");
-    event.target.value = "";
-  }
-
-  async function getDiseaseAdvice() {
-    if (!plantImage || !plantFile) {
-      setDiseaseAdvice("আগে আক্রান্ত পাতার একটি পরিষ্কার ছবি যোগ করুন।");
-      return;
-    }
+    setPlantFileName(file.name || "নির্বাচিত গাছের ছবি");
+    setDiseaseResult(null);
+    setDiseaseError("");
     setDiseaseLoading(true);
-    setDiseaseAdvice("");
+
     try {
-      const imageData = await fileToJpegDataUrl(plantFile);
+      const imageData = await fileToJpegDataUrl(file);
       const response = await fetch("/api/disease", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_data_url: imageData, crop, symptom }),
+        body: JSON.stringify({
+          image_data_url: imageData,
+          symptom,
+          include_ai_explanation: includeAiExplanation,
+        }),
+        signal: controller.signal,
       });
-      const data = await response.json() as {
-        error?: string;
-        prediction?: { crop_label: string; label: string; score_percent: number };
-        scope_warning?: string;
-        summary?: string;
-      };
-      if (!response.ok || !data.prediction) throw new Error(data.error ?? "ছবি বিশ্লেষণ করা যায়নি।");
-      const prediction = data.prediction;
-      setDiseaseAdvice(
-        `ছবির মডেল-ভিত্তিক ফল: ${prediction.crop_label} — ${prediction.label} (${formatBnNumber(prediction.score_percent, 1)}%)\n\n${data.scope_warning ?? "মডেল স্কোর নিশ্চিত রোগনির্ণয় নয়।"}\n\n${data.summary ?? "ঐচ্ছিক AI সারাংশ পাওয়া যায়নি।"}\n\nনোট: মডেল স্কোর ক্যালিব্রেটেড সম্ভাবনা নয়; ফলাফল কৃষি বিশেষজ্ঞের রোগনির্ণয়ের বিকল্প নয়।`,
-      );
+      const data = await response.json() as DiseaseResponse & { error?: string };
+      if (!response.ok || !data.prediction || !data.guidance) {
+        throw new Error(data.error ?? "ছবি বিশ্লেষণ করা যায়নি।");
+      }
+      if (requestId === diseaseRequestId.current) setDiseaseResult(data);
     } catch (error) {
-      setDiseaseAdvice(error instanceof Error ? error.message : "এখন ছবি বিশ্লেষণ করা যাচ্ছে না।");
+      if ((error as Error).name !== "AbortError" && requestId === diseaseRequestId.current) {
+        setDiseaseError(error instanceof Error ? error.message : "এখন ছবি বিশ্লেষণ করা যাচ্ছে না।");
+      }
     } finally {
-      setDiseaseLoading(false);
+      if (requestId === diseaseRequestId.current) {
+        setDiseaseLoading(false);
+        diseaseAbort.current = null;
+      }
     }
+  }
+
+  function onPlantImage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) void analyzePlantFile(file);
+  }
+
+  function onPlantDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    setIsDragOver(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) void analyzePlantFile(file);
+  }
+
+  function clearPlantImage() {
+    diseaseAbort.current?.abort();
+    diseaseRequestId.current += 1;
+    setDiseaseLoading(false);
+    setPlantImage(null);
+    setPlantFile(null);
+    setPlantFileName("");
+    setDiseaseResult(null);
+    setDiseaseError("");
+  }
+
+  function reanalysePlant() {
+    if (plantFile) void analyzePlantFile(plantFile);
   }
 
   const currentWeather = weather?.weather.current;
@@ -316,7 +387,7 @@ export default function HomePage() {
       <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
         <div className="brand-lockup">
           <div className="brand-mark"><Sprout size={25} strokeWidth={2.4} /></div>
-          <div><strong>ক্ষেতসাথী</strong><span>কৃষি বুদ্ধিমত্তা</span></div>
+          <div className="brand-copy"><strong>স্মার্ট কৃষি বুদ্ধিমত্তা</strong><span>Technology should empower those who feed nations</span></div>
           <button className="icon-button close-menu" onClick={() => setMobileNav(false)} aria-label="মেনু বন্ধ করুন"><X size={19} /></button>
         </div>
         <div className="sidebar-label">মূল নেভিগেশন</div>
@@ -338,7 +409,7 @@ export default function HomePage() {
       <section className="content-area">
         <header className="topbar">
           <button className="icon-button hamburger" onClick={() => setMobileNav(true)} aria-label="মেনু খুলুন"><Menu size={22} /></button>
-          <div className="breadcrumb"><span>ক্ষেতসাথী</span><ChevronRight size={14} /><strong>{navigation.find((item) => item.id === active)?.label}</strong></div>
+          <div className="breadcrumb"><span>স্মার্ট কৃষি বুদ্ধিমত্তা</span><ChevronRight size={14} /><strong>{navigation.find((item) => item.id === active)?.label}</strong></div>
           <div className="topbar-actions"><div className="live-label"><span className="status-dot" /> সেবা চালু</div><button className="profile-button" onClick={() => setActive("chat")}><Bot size={17} /><span>AI সহায়ক</span></button></div>
         </header>
 
@@ -354,7 +425,13 @@ export default function HomePage() {
             districtName={districtName} coordinates={coordinates} weather={weather} loading={weatherLoading} error={weatherError}
             selectDistrict={selectDistrict} detectLocation={detectLocation} locating={locating} locationMessage={locationMessage}
           />}
-          {active === "disease" && <DiseaseAssistant crop={crop} setCrop={setCrop} plantImage={plantImage} plantFileName={plantFileName} fileInput={fileInput} onImage={onPlantImage} symptom={symptom} setSymptom={setSymptom} advice={diseaseAdvice} loading={diseaseLoading} getAdvice={getDiseaseAdvice} />}
+          {active === "disease" && <DiseaseAssistant
+            plantImage={plantImage} plantFileName={plantFileName} galleryInput={galleryInput} cameraInput={cameraInput}
+            onImage={onPlantImage} onDrop={onPlantDrop} isDragOver={isDragOver} setIsDragOver={setIsDragOver}
+            symptom={symptom} setSymptom={setSymptom} includeAiExplanation={includeAiExplanation}
+            setIncludeAiExplanation={setIncludeAiExplanation} result={diseaseResult} error={diseaseError}
+            loading={diseaseLoading} clearImage={clearPlantImage} reanalyse={reanalysePlant}
+          />}
           {active === "chat" && <Chat
             messages={chatMessages} input={chatInput} setInput={setChatInput} onSubmit={sendChat} loading={chatLoading} error={chatError}
             districtName={districtName} setCrop={setCrop} setActive={setActive}
@@ -440,22 +517,138 @@ function Weather({ districtName, coordinates, weather, loading, error, selectDis
   </>;
 }
 
-function DiseaseAssistant({ crop, setCrop, plantImage, plantFileName, fileInput, onImage, symptom, setSymptom, advice, loading, getAdvice }: { crop: string; setCrop: (value: string) => void; plantImage: string | null; plantFileName: string; fileInput: React.RefObject<HTMLInputElement | null>; onImage: (event: ChangeEvent<HTMLInputElement>) => void; symptom: string; setSymptom: (value: string) => void; advice: string; loading: boolean; getAdvice: () => void }) {
+function MarkdownContent({ content, className = "" }: { content: string; className?: string }) {
+  return <div className={`markdown-content ${className}`}>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ href, children }) => <a href={href} target="_blank" rel="noreferrer">{children}</a>,
+      }}
+    >{content}</ReactMarkdown>
+  </div>;
+}
+
+function DiseaseAssistant({
+  plantImage, plantFileName, galleryInput, cameraInput, onImage, onDrop, isDragOver, setIsDragOver,
+  symptom, setSymptom, includeAiExplanation, setIncludeAiExplanation, result, error, loading, clearImage, reanalyse,
+}: {
+  plantImage: string | null;
+  plantFileName: string;
+  galleryInput: React.RefObject<HTMLInputElement | null>;
+  cameraInput: React.RefObject<HTMLInputElement | null>;
+  onImage: (event: ChangeEvent<HTMLInputElement>) => void;
+  onDrop: (event: DragEvent<HTMLElement>) => void;
+  isDragOver: boolean;
+  setIsDragOver: (value: boolean) => void;
+  symptom: string;
+  setSymptom: (value: string) => void;
+  includeAiExplanation: boolean;
+  setIncludeAiExplanation: (value: boolean) => void;
+  result: DiseaseResponse | null;
+  error: string;
+  loading: boolean;
+  clearImage: () => void;
+  reanalyse: () => void;
+}) {
+  const healthy = result?.guidance.category === "healthy_class";
+  const onDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    const nextTarget = event.relatedTarget;
+    if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) setIsDragOver(false);
+  };
+
   return <>
-    <ScreenTitle eyebrow="সতর্ক ও ব্যবহারযোগ্য সহায়তা" title="পাতার সমস্যা বুঝতে সহায়তা"><CropSelect value={crop} onChange={setCrop}/></ScreenTitle>
-    <div className="notice info-notice"><ShieldCheck size={19}/><div><strong>নিরাপদ মূল্যায়ন</strong><p>ছবিটি সার্ভারে পাঠিয়ে আগে থেকে প্রশিক্ষিত ৩৮-শ্রেণির ResNet9 মডেলে বিশ্লেষণ করা হবে; মডেলটি নির্দিষ্ট PlantVillage ফসলেই সীমিত, সব বাংলাদেশি ফসল বা রোগে নয়। ঐচ্ছিক Groq সারাংশে ছবির বদলে শুধু মডেল-লেবেল ও আপনার লেখা লক্ষণ পাঠানো হয়। স্কোর নিশ্চিত রোগনির্ণয় নয়।</p></div></div>
-    <section className="disease-layout"><div className="upload-card panel"><div className="upload-heading"><div className="metric-icon green"><ScanLine size={22}/></div><div><h2>পাতার ছবি যোগ করুন</h2><p>ভালো আলোতে, আক্রান্ত অংশটি কাছে থেকে তুলুন</p></div></div><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" onChange={onImage} hidden/>{plantImage ? <div className="image-preview"><img src={plantImage} alt="আপলোড করা পাতার প্রিভিউ"/><button onClick={() => fileInput.current?.click()}><Upload size={15}/> ছবি বদলান</button><span>{plantFileName}</span></div> : <button className="upload-zone" onClick={() => fileInput.current?.click()}><span className="upload-icon"><Upload size={25}/></span><strong>ছবি নির্বাচন করুন</strong><small>JPG, PNG বা WebP · সর্বোচ্চ ৮ এমবি</small></button>}</div>
-      <div className="diagnosis-card panel"><div className="panel-heading"><div><p className="section-kicker">লক্ষণ লিখুন</p><h2>প্রাথমিক মাঠ-পরামর্শ</h2></div><Bug size={23} className="muted-icon"/></div><label className="text-field"><span>আপনি কী দেখতে পাচ্ছেন?</span><textarea value={symptom} onChange={(event) => setSymptom(event.target.value)} placeholder="যেমন: পাতায় বাদামি দাগ, কুঁকড়ে যাচ্ছে, গাছ দুর্বল দেখাচ্ছে…" rows={5}/></label><button className="primary-button full-width" onClick={getAdvice} disabled={loading}>{loading ? <LoaderCircle size={17} className="spin"/> : <Sparkles size={17}/>} {loading ? "পরামর্শ তৈরি হচ্ছে" : "AI সহায়তা নিন"}</button><p className="tiny-note"><ShieldCheck size={14}/> জরুরি বা দ্রুত ছড়িয়ে পড়া সমস্যায় নিকটস্থ কৃষি অফিসে নমুনাসহ যোগাযোগ করুন।</p></div></section>
-    {advice && <section className="advice-response"><Bot size={21}/><div><p className="section-kicker">ক্ষেতসাথীর পরামর্শ</p><div className="rich-text">{advice}</div></div></section>}
+    <ScreenTitle eyebrow="ছবি দিন, প্রাথমিক সহায়তা পান" title="রোগ সহায়তা" />
+    <div className="notice info-notice disease-scope-notice"><ShieldCheck size={19}/><div><strong>মডেলের সীমা ও নিরাপদ ব্যবহার</strong><p>ছবি আপলোড করলেই বিদ্যমান ৩৮-শ্রেণির PlantVillage ResNet9 মডেল চালু হবে। এটি বাংলাদেশের সব ফসল/রোগ বা যেকোনো পাতার ছবি শনাক্ত করে না, এবং সবসময় একটি শ্রেণি বেছে নেয়। স্কোর নিশ্চিত রোগনির্ণয় নয়—ফল ও বাস্তব লক্ষণ মিলিয়ে নিন।</p></div></div>
+
+    <section className="disease-layout">
+      <div className="upload-card panel">
+        <div className="upload-heading"><div className="metric-icon green"><ScanLine size={22}/></div><div><h2>পাতার ছবি যোগ করুন</h2><p>ভালো আলোতে আক্রান্ত অংশটি কাছে থেকে তুলুন</p></div></div>
+        <input ref={galleryInput} type="file" accept="image/*" onChange={onImage} hidden />
+        <input ref={cameraInput} type="file" accept="image/*" capture="environment" onChange={onImage} hidden />
+        <div
+          className={`disease-drop-area ${isDragOver ? "drag-over" : ""}`}
+          onDragEnter={(event) => { event.preventDefault(); setIsDragOver(true); }}
+          onDragOver={(event) => { event.preventDefault(); setIsDragOver(true); }}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+        >
+          {plantImage ? <div className="image-preview">
+            <img src={plantImage} alt="আপলোড করা গাছের পাতার প্রিভিউ" />
+            <div className="preview-actions"><span title={plantFileName}>{plantFileName}</span><button type="button" onClick={clearImage} aria-label="ছবি সরান"><X size={15}/></button></div>
+          </div> : <div className="upload-zone">
+            <span className="upload-icon"><Upload size={25}/></span>
+            <strong>ছবি এখানে টেনে আনুন</strong>
+            <small>অথবা গ্যালারি থেকে বাছুন · JPG, PNG, WebP · সর্বোচ্চ ৮ এমবি</small>
+          </div>}
+        </div>
+        <div className="capture-actions">
+          <button type="button" className="secondary-capture" onClick={() => galleryInput.current?.click()}><ImagePlus size={17}/> গ্যালারি</button>
+          <button type="button" className="secondary-capture" onClick={() => cameraInput.current?.click()}><Camera size={17}/> ক্যামেরা</button>
+          {plantImage && <button type="button" className="secondary-capture" onClick={() => galleryInput.current?.click()}><Upload size={16}/> ছবি বদলান</button>}
+        </div>
+        {loading && <p className="analysis-status"><LoaderCircle size={16} className="spin"/> ছবিটি বিশ্লেষণ করা হচ্ছে…</p>}
+        {error && <div className="disease-error" role="alert"><FileWarning size={16}/><span>{error}</span></div>}
+      </div>
+
+      <div className="diagnosis-card panel">
+        <div className="panel-heading"><div><p className="section-kicker">ঐচ্ছিক পর্যবেক্ষণ</p><h2>আপনি কী লক্ষ করছেন?</h2></div><Bug size={23} className="muted-icon"/></div>
+        <label className="text-field"><span>পাতার দৃশ্যমান লক্ষণ (ঐচ্ছিক)</span><textarea value={symptom} onChange={(event) => setSymptom(event.target.value)} placeholder="যেমন: পাতায় বাদামি দাগ, কুঁকড়ে যাচ্ছে, গাছ দুর্বল দেখাচ্ছে…" rows={5}/></label>
+        <label className="ai-option-card"><input type="checkbox" checked={includeAiExplanation} onChange={(event) => setIncludeAiExplanation(event.target.checked)} /><span><strong>AI ব্যাখ্যা যোগ করুন</strong><small>এটি বন্ধ রাখলে শুধু মডেল ফল ও যাচাইকৃত নির্দেশনা দেখানো হবে। চালু করলে Groq-কে মডেলের লেবেল/স্কোর ও আপনার লেখা লক্ষণ দেওয়া হবে—ছবি পাঠানো হবে না।</small></span><Sparkles size={18}/></label>
+        <button type="button" className="primary-button full-width" onClick={reanalyse} disabled={!plantImage || loading}>{loading ? <LoaderCircle size={17} className="spin"/> : <ScanLine size={17}/>} {loading ? "বিশ্লেষণ চলছে" : "লক্ষণ/AI বিকল্পসহ আবার বিশ্লেষণ"}</button>
+        <p className="tiny-note"><ShieldCheck size={14}/> ফসল বাছাইয়ের প্রয়োজন নেই। লক্ষণ বা AI বিকল্প বদলালে নতুন বিশ্লেষণ চালান।</p>
+      </div>
+    </section>
+
+    {result && <section className="disease-results" aria-live="polite">
+      <div className="result-heading panel">
+        <div className="result-status-icon"><Leaf size={22}/></div>
+        <div><p className="section-kicker">ছবির মডেলের শীর্ষ অনুমান</p><h2>{result.prediction.crop_label} <span>·</span> {result.prediction.label}</h2><p className="result-score">মডেল স্কোর {formatBnNumber(result.prediction.score_percent, 1)}% · এটি ক্যালিব্রেটেড সম্ভাবনা নয়</p></div>
+      </div>
+      <div className="notice warning-notice result-caveat"><FileWarning size={19}/><div><strong>এটি নিশ্চিত রোগনির্ণয় নয়</strong><p>{result.scope_warning}</p></div></div>
+
+      <section className="panel result-card">
+        <div className="panel-heading"><div><p className="section-kicker">সহায়ক যাচাই</p><h2>{healthy ? "মডেল ‘সুস্থ’ শ্রেণি দিয়েছে" : "সম্ভাব্য সমস্যা যাচাই করুন"}</h2></div><ShieldCheck size={21} className="muted-icon"/></div>
+        <p className="result-explanation">{result.guidance.reason}</p>
+        <div className="signs-check"><strong>যে লক্ষণগুলো হাতে মিলিয়ে দেখবেন</strong><p>{result.guidance.signs_to_check}</p></div>
+        <div className="result-grid">
+          <div><h3>এখন যা করতে পারেন</h3><ul>{result.guidance.actions.map((action, index) => <li key={index}>{action}</li>)}</ul></div>
+          <div><h3>সেচ ও পানি ব্যবস্থাপনা</h3><p>{result.guidance.watering.care}</p><p className="small-caveat">{result.guidance.watering.amount_note}</p></div>
+        </div>
+      </section>
+
+      <section className="panel top-predictions-card">
+        <div className="panel-heading"><div><p className="section-kicker">বিকল্প শ্রেণি</p><h2>শীর্ষ মডেল ফল</h2></div><span className="model-tag">৩৮-শ্রেণির মডেল</span></div>
+        <div className="prediction-list">{result.top_predictions.slice(0, 3).map((item, index) => <div className="prediction-item" key={item.class_label}>
+          <span className="prediction-rank">{formatBnNumber(index + 1)}</span><div className="prediction-name"><strong>{item.crop_label} · {item.label}</strong><div className="prediction-track"><i style={{ width: `${Math.max(0, Math.min(100, item.score_percent))}%` }}/></div></div><span className="prediction-score">{formatBnNumber(item.score_percent, 1)}%</span>
+        </div>)}</div>
+      </section>
+
+      {result.guidance.products.length > 0 && <section className="panel product-recommendations">
+        <div className="panel-heading"><div><p className="section-kicker">DAE PPW repository record</p><h2>DAE-তে নথিভুক্ত ব্যবহার</h2></div><ShieldCheck size={21} className="muted-icon"/></div>
+        <p className="product-safety-note">{result.guidance.product_note}</p>
+        <div className="product-list">{result.guidance.products.map((product) => <article className="product-card" key={product.registration_no}>
+          <div className="product-card-heading"><div><h3>{product.name}</h3><span>AP নম্বর: {product.registration_no} · {product.active_ingredients}</span></div><span className="verified-tag">DAE record</span></div>
+          <p><strong>লেবেলে উল্লেখিত ব্যবহার:</strong> {product.label_scope}</p><p><strong>রেকর্ডের মাত্রা:</strong> {product.rate}</p>
+          <ul>{product.directions.map((direction, index) => <li key={index}>{direction}</li>)}</ul>
+          <a className="product-source-link" href={product.source_url} target="_blank" rel="noreferrer">{product.source_label} <MoveUpRight size={14}/></a>
+        </article>)}</div>
+        <p className="small-caveat">রেকর্ডটি সক্রিয় নিবন্ধন বা স্থানীয় দোকানে মজুতের নিশ্চয়তা নয়। প্যাকেটের বর্তমান লেবেল, ফসল, রোগ, মাত্রা ও PHI মিলিয়ে নিন; প্রয়োজনে উপজেলা কৃষি অফিসারের পরামর্শ নিন।</p>
+      </section>}
+      {!result.guidance.products.length && !healthy && <section className="panel product-recommendations no-product-match"><div className="panel-heading"><div><p className="section-kicker">বালাইনাশক বিষয়ে সতর্কতা</p><h2>যাচাইকৃত পণ্য-তথ্য নেই</h2></div><ShieldCheck size={21} className="muted-icon"/></div><p className="product-safety-note">{result.guidance.product_note}</p><p className="small-caveat">নিজে থেকে ব্র্যান্ড, মিশ্রণ, মাত্রা বা পানির পরিমাণ ঠিক করবেন না। উপজেলা-ভিত্তিক তালিকা এবং বর্তমান প্যাকেট-লেবেল যাচাই করুন।</p></section>}
+
+      {result.summary_requested && <section className="panel ai-summary-card"><div className="panel-heading"><div><p className="section-kicker">ঐচ্ছিক AI ব্যাখ্যা</p><h2>সাধারণ পরবর্তী পদক্ষেপ</h2></div><Sparkles size={20} className="muted-icon"/></div>{result.summary_available && result.summary ? <MarkdownContent content={result.summary} className="ai-summary-text"/> : <p className="small-caveat">এই মুহূর্তে AI ব্যাখ্যা পাওয়া যায়নি। উপরের নিয়মভিত্তিক নির্দেশনা দেখা যাচ্ছে।</p>}<p className="small-caveat">AI ছবিটি দেখেনি। AI ব্যাখ্যা সাধারণ তথ্য; ওষুধ/মাত্রার পরামর্শ নয়।</p></section>}
+
+      <section className="panel source-list-card"><div className="panel-heading"><div><p className="section-kicker">সরকারি তথ্য ও সতর্কতা</p><h2>উৎস ও আরও যাচাই</h2></div><ShieldCheck size={20} className="muted-icon"/></div><div className="source-links">{result.guidance.sources.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer">{source.label}<MoveUpRight size={14}/></a>)}</div><p className="small-caveat">রেফারেন্স শেষ পর্যালোচনা: {result.guidance.source_checked_on} · PRISM-এর তালিকা উপজেলা-ভিত্তিক; এটি বাজারে সবসময় পণ্য পাওয়া বা এই মডেলের রোগ শনাক্তকরণের নিশ্চয়তা নয়।</p></section>
+    </section>}
   </>;
 }
 
 function Chat({ messages, input, setInput, onSubmit, loading, error, districtName, setCrop, setActive }: { messages: ChatMessage[]; input: string; setInput: (value: string) => void; onSubmit: (event: FormEvent) => void; loading: boolean; error: string; districtName: string; setCrop: (value: string) => void; setActive: (value: Screen) => void }) {
   const suggestions = ["ধানের পাতায় দাগ হলে প্রথমে কী দেখব?", "বৃষ্টির আগে কীভাবে সেচ পরিকল্পনা করব?", "আলু সংরক্ষণে কী খেয়াল রাখা উচিত?"];
   return <>
-    <ScreenTitle eyebrow="বাংলায় কৃষির কথা বলুন" title="AI কৃষি সহায়ক"><div className="ai-chip"><Bot size={17}/> ক্ষেতসাথী AI</div></ScreenTitle>
+    <ScreenTitle eyebrow="বাংলায় কৃষির কথা বলুন" title="AI কৃষি সহায়ক"><div className="ai-chip"><Bot size={17}/> স্মার্ট কৃষি বুদ্ধিমত্তা AI</div></ScreenTitle>
     <section className="chat-layout"><aside className="chat-context"><div className="assistant-avatar"><Bot size={25}/></div><h2>আজ কী নিয়ে ভাবছেন?</h2><p>ফসলের সাধারণ পরিচর্যা, আবহাওয়া বুঝে পরিকল্পনা এবং লক্ষণভিত্তিক নিরাপদ পরামর্শে আমি সাহায্য করতে পারি।</p><div className="context-item"><MapPin size={17}/><span>এলাকা<strong>{districtName}</strong></span></div><div className="context-item"><ShieldCheck size={17}/><span>উত্তর ভাষা<strong>বাংলা</strong></span></div><button onClick={() => { setCrop("ধান"); setActive("advice"); }} className="quiet-link">ফসলের গাইড দেখুন <ChevronRight size={15}/></button></aside>
-      <div className="chat-panel panel"><div className="chat-head"><div><strong>ক্ষেতসাথী</strong><span><i className="status-dot"/> উত্তর দিতে প্রস্তুত</span></div><span>সাধারণ কৃষি সহায়তা</span></div><div className="chat-thread">{messages.map((message, index) => <div className={`message ${message.role}`} key={`${message.role}-${index}`}><div className="message-avatar">{message.role === "assistant" ? <Bot size={16}/> : <span>আপনি</span>}</div><p>{message.content}</p></div>)}{loading && <div className="message assistant"><div className="message-avatar"><Bot size={16}/></div><p className="typing"><i/><i/><i/></p></div>}</div>{error && <div className="chat-error"><FileWarning size={16}/><span>{error}</span></div>}<div className="suggestion-row">{suggestions.map((suggestion) => <button key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}</div><form className="chat-form" onSubmit={onSubmit}><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSubmit(event); } }} placeholder="আপনার প্রশ্ন লিখুন…" rows={1}/><button aria-label="বার্তা পাঠান" disabled={!input.trim() || loading}><Send size={19}/></button></form><p className="chat-disclaimer">AI-এর পরামর্শ সাধারণ তথ্য। রোগ, সার ও বালাই ব্যবস্থাপনায় স্থানীয় কৃষি বিশেষজ্ঞের পরামর্শ নিন।</p></div>
+      <div className="chat-panel panel"><div className="chat-head"><div><strong>স্মার্ট কৃষি বুদ্ধিমত্তা</strong><span><i className="status-dot"/> উত্তর দিতে প্রস্তুত</span></div><span>সাধারণ কৃষি সহায়তা</span></div><div className="chat-thread">{messages.map((message, index) => <div className={`message ${message.role}`} key={`${message.role}-${index}`}><div className="message-avatar">{message.role === "assistant" ? <Bot size={16}/> : <span>আপনি</span>}</div><div className={`message-bubble ${message.role}`}><MarkdownContent content={message.content}/></div></div>)}{loading && <div className="message assistant"><div className="message-avatar"><Bot size={16}/></div><p className="typing"><i/><i/><i/></p></div>}</div>{error && <div className="chat-error"><FileWarning size={16}/><span>{error}</span></div>}<div className="suggestion-row">{suggestions.map((suggestion) => <button key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}</div><form className="chat-form" onSubmit={onSubmit}><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); onSubmit(event); } }} placeholder="আপনার প্রশ্ন লিখুন…" rows={1}/><button aria-label="বার্তা পাঠান" disabled={!input.trim() || loading}><Send size={19}/></button></form><p className="chat-disclaimer">AI-এর পরামর্শ সাধারণ তথ্য। রোগ, সার ও বালাই ব্যবস্থাপনায় স্থানীয় কৃষি বিশেষজ্ঞের পরামর্শ নিন।</p></div>
     </section>
   </>;
 }
@@ -466,6 +659,6 @@ function CropAdvice({ crop, districtName, setCrop, selectDistrict, guide }: { cr
     <section className="advice-hero"><div><p className="section-kicker">{districtName} জেলার জন্য নির্বাচন করা হয়েছে</p><h2>{crop} চাষের মৌলিক নির্দেশনা</h2><p>এটি সাধারণ, বাংলাদেশ-প্রাসঙ্গিক পরিচর্যা নির্দেশনা। জমির মাটি, জাত, মৌসুম এবং স্থানীয় পরিস্থিতি অনুযায়ী কৃষি সম্প্রসারণ কর্মকর্তার পরামর্শকে অগ্রাধিকার দিন।</p></div><div className="advice-crop-symbol"><Leaf size={69}/><span>{crop}</span></div></section>
     <section className="guide-grid"><article><CalendarDays size={21}/><p>সময় ও মৌসুম</p><strong>{guide.season}</strong></article><article><Map size={21}/><p>জমি ও মাটি</p><strong>{guide.soil}</strong></article><article><Droplets size={21}/><p>পানি ব্যবস্থাপনা</p><strong>{guide.water}</strong></article></section>
     <section className="practice-panel panel"><div><p className="section-kicker">ভালো চাষের ভিত্তি</p><h2>মাঠে যা খেয়াল রাখবেন</h2></div><div className="practice-list"><div><span>০১</span><p>{guide.note}</p></div><div><span>০২</span><p>জমির ইতিহাস, মাটির পরীক্ষা এবং অনুমোদিত জাতের তথ্য নিয়ে স্থানীয় কৃষি অফিসের সঙ্গে পরিকল্পনা মিলিয়ে নিন।</p></div><div><span>০৩</span><p>{guide.warning}</p></div></div></section>
-    <section className="help-callout"><div className="help-icon"><MessageCircle size={22}/></div><div><h2>আপনার জমির অবস্থা আলাদা?</h2><p>মাটি, সেচ বা পাতার লক্ষণ জানিয়ে ক্ষেতসাথী AI-এর কাছে সাধারণ পরামর্শ নিতে পারেন।</p></div><button className="secondary-button" onClick={() => document.querySelector<HTMLButtonElement>(".nav-item:nth-child(6)")?.click()}>AI-কে প্রশ্ন করুন <ChevronRight size={17}/></button></section>
+    <section className="help-callout"><div className="help-icon"><MessageCircle size={22}/></div><div><h2>আপনার জমির অবস্থা আলাদা?</h2><p>মাটি, সেচ বা পাতার লক্ষণ জানিয়ে স্মার্ট কৃষি বুদ্ধিমত্তা AI-এর কাছে সাধারণ পরামর্শ নিতে পারেন।</p></div><button className="secondary-button" onClick={() => document.querySelector<HTMLButtonElement>(".nav-item:nth-child(6)")?.click()}>AI-কে প্রশ্ন করুন <ChevronRight size={17}/></button></section>
   </>;
 }

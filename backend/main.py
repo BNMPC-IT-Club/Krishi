@@ -32,6 +32,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from backend.ai_service import complete, disease_summary
+from backend.disease_guidance import get_disease_guidance
 from backend.data_mappings import (
     CROP_BN_TO_SAMPLE_EN,
     DEMO_BASE_PRICES,
@@ -42,8 +43,8 @@ from backend.disease_labels import DISEASE_TRANSLATION
 
 
 app = FastAPI(
-    title="ক্ষেতসাথী কৃষি API",
-    description="Next.js UI-র জন্য ঐচ্ছিক Python API; প্রোটোটাইপ ডেটা স্পষ্টভাবে চিহ্নিত।",
+    title="স্মার্ট কৃষি বুদ্ধিমত্তা API",
+    description="বাংলাদেশের কৃষকদের জন্য Smart Krishi Buddhimotta Python API; প্রোটোটাইপ ডেটা স্পষ্টভাবে চিহ্নিত।",
     version="1.0.0",
 )
 
@@ -64,7 +65,6 @@ CSV_PATH = _REPO_ROOT / "bd_crop_price_data.csv"
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
 MAX_IMAGE_PIXELS = 24_000_000
 BANGLA_DIGITS = str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯")
-MODEL_CROP_NAMES = {"আপেল", "ব্লুবেরি", "চেরি", "ভুট্টা", "আঙুর", "কমলা", "পীচ", "ক্যাপসিকাম", "আলু", "রাস্পবেরি", "সয়াবিন", "স্কোয়াশ", "স্ট্রবেরি", "টমেটো"}
 
 
 class ChatMessage(BaseModel):
@@ -79,8 +79,8 @@ class ChatRequest(BaseModel):
 
 class DiseaseRequest(BaseModel):
     image_data_url: str = Field(min_length=50, max_length=3_000_000)
-    crop: str = Field(default="", max_length=100)
     symptom: str = Field(default="", max_length=500)
+    include_ai_explanation: bool = False
 
 
 def _normalize_key(value: str) -> str:
@@ -419,39 +419,36 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
         ) from None
 
     prediction = top_predictions[0]
-    selected_crop = request.crop.strip()
-    known_local = {"ধান", "বোরো ধান", "আমন ধান", "পাট", "আখ", "সরিষা", "মসুর ডাল", "কাঁচামরিচ", "শসা", "বাঁধাকপি", "ফুলকপি", "বেগুন", "গম", "আলু", "টমেটো", "ভুট্টা", "কলা", "পেঁপে", "পেঁয়াজ", "রসুন", "আদা"}
-    crop_out_of_scope = bool(selected_crop and selected_crop in known_local and selected_crop not in MODEL_CROP_NAMES)
-    if crop_out_of_scope:
-        scope_warning = (
-            f"আপনি {selected_crop} নির্বাচন করেছেন, কিন্তু বিদ্যমান ছবির মডেলে এই ফসলের শ্রেণি নেই। "
-            "ফলাফলটি ভুল হতে পারে; এটি ওই ফসলের রোগ শনাক্ত করার প্রমাণ নয়।"
-        )
-    else:
-        scope_warning = "মডেল স্কোর ক্যালিব্রেটেড সম্ভাবনা নয়; এটি নিশ্চিত রোগনির্ণয়ও নয়।"
-
-    answer, model_name, ai_error = disease_summary(
-        prediction["crop_label"], prediction["label"], prediction["score_percent"],
-        top_predictions, request.symptom,
+    scope_warning = (
+        "এটি আগে থেকে প্রশিক্ষিত ৩৮-শ্রেণির PlantVillage ResNet9 মডেলের একটি অনুমান—"
+        "বাংলাদেশের সব ফসল/রোগ বা যেকোনো পাতার ছবি শনাক্ত করার মডেল নয়। মডেল সবসময় একটি শ্রেণি বেছে নেয়; "
+        "স্কোর calibrated সম্ভাবনা নয়। শীর্ষ বিকল্পগুলো ও বাস্তব লক্ষণ মিলিয়ে দেখুন; শুধু স্কোর দেখে চিকিৎসা শুরু করবেন না।"
     )
-    if not answer:
-        ai_note = (
-            "ঐচ্ছিক Groq AI সারাংশ পাওয়া যায়নি। ছবিটি শুধু বিদ্যমান মডেলে বিশ্লেষিত হয়েছে; "
-            "শ্রেণি-স্কোর নিশ্চিত রোগ বা চিকিৎসার প্রমাণ নয়। পাতার দুই পাশ পরীক্ষা করুন, "
-            "আক্রান্ত গাছ আলাদা করে পর্যবেক্ষণ করুন এবং উপজেলা কৃষি অফিসারের পরামর্শ নিন।"
+
+    answer = None
+    model_name = None
+    ai_error = None
+    if request.include_ai_explanation:
+        answer, model_name, ai_error = disease_summary(
+            prediction["crop_label"], prediction["label"], prediction["score_percent"],
+            top_predictions, request.symptom,
         )
-    else:
-        ai_note = answer
 
     return {
         "prediction": prediction,
         "top_predictions": top_predictions,
-        "crop_out_of_scope": crop_out_of_scope,
         "scope_warning": scope_warning,
-        "summary": ai_note,
+        "guidance": get_disease_guidance(prediction["class_label"]),
+        "summary": answer,
         "summary_model": model_name,
+        "summary_requested": request.include_ai_explanation,
         "summary_available": answer is not None,
         "summary_error_code": ai_error,
         "image_sent_to_groq": False,
-        "data_kind": "existing_pretrained_model",
+        "model_scope": {
+            "name": "ResNet9 / PlantVillage",
+            "class_count": 38,
+            "all_bangladesh_crops_supported": False,
+        },
+        "data_kind": "existing_pretrained_model_with_curated_guidance",
     }

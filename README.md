@@ -1,12 +1,12 @@
 # Smart Krishi Buddhimotta 🌾
 
-বাংলাদেশি কৃষকের জন্য বাংলা-ভিত্তিক কৃষি সহায়তা অ্যাপ। বর্তমান ফ্রন্টএন্ডটি `ui-smart-krishi-buddhimotta/`-র Next.js UI; **ফসল পরামর্শ** গাইডসহ এর নকশা ও মেনু অক্ষুণ্ণ রাখা হয়েছে।
+বাংলাদেশি কৃষকের জন্য বাংলা-ভিত্তিক কৃষি সহায়তা অ্যাপ। **Technology should empower those who feed nations.** বর্তমান ফ্রন্টএন্ডটি `ui-smart-krishi-buddhimotta/`-র Next.js UI; **ফসল পরামর্শ** গাইডসহ এর নকশা ও মেনু অক্ষুণ্ণ রাখা হয়েছে।
 
 ## কীভাবে কাজ করে
 
 - **Next.js (Vercel):** UI, Open-Meteo আবহাওয়া API route, OpenStreetMap অবস্থান/মানচিত্র, Telegram webhook, এবং Python API-র server-side proxy।
 - **FastAPI (Render বা অন্য Python host):** Groq বাংলা চ্যাট, রোগের ছবির inference, এবং মূল্য-পূর্বাভাসের prototype endpoint।
-- **রোগের ছবি:** repository-তে থাকা পূর্বপ্রশিক্ষিত ResNet9 ও `plant_disease_weights.pth` ব্যবহৃত হয়—কোনো মডেল retrain করা হয় না। এটি ৩৮টি PlantVillage শ্রেণির মধ্যে সীমিত। Groq-এ ছবিটি পাঠানো হয় না; সারাংশ চাইলে শুধু শ্রেণির ফল ও ব্যবহারকারীর লেখা লক্ষণ যায়।
+- **রোগের ছবি:** drag-and-drop, gallery বা camera থেকে ছবি দিলেই স্বয়ংক্রিয়ভাবে repository-তে থাকা পূর্বপ্রশিক্ষিত ResNet9 ও `plant_disease_weights.pth` চালু হয়—ফসল বাছাই লাগে না, কোনো মডেল retrain করা হয় না। এটি কেবল ৩৮টি PlantVillage শ্রেণির মধ্যে সীমিত; ফল নিশ্চিত রোগনির্ণয় নয়। AI ব্যাখ্যা ঐচ্ছিক; Groq-এ ছবিটি পাঠানো হয় না—শুধু শ্রেণির ফল ও ব্যবহারকারীর লেখা লক্ষণ যায়। নিয়মভিত্তিক নির্দেশনা এবং DAE PPW product-use তথ্য আলাদাভাবে দেখানো হয়; নির্দিষ্ট crop–disease–label match অনিশ্চিত হলে ব্র্যান্ড/মাত্রা দেখানো হয় না, এবং repository record স্থানীয় বাজারে মজুতের নিশ্চয়তা নয়।
 - **মূল্য:** `bd_crop_price_data.csv`-র নমুনা দিয়ে backend-এর ১৪ দিনের পরীক্ষামূলক simulation; CSV-র তারিখ ১৮ মে ২০২৫-এ শেষ। ফল **লাইভ, সরকারি বা যাচাইকৃত দাম/পূর্বাভাস নয়**। CSV-তে ফসলের সারি না থাকলে স্পষ্টভাবে demo baseline ব্যবহৃত হয়। বাজারদরের স্ক্রিনেও কেবল prototype data দেখানো হয়।
 - **ফসল পরামর্শ:** বিদ্যমান ২১টি ফসলের স্থানীয় গাইড; বাইরের AI বা database ছাড়াই চলে।
 - **Weather/map:** keyless Open-Meteo forecast এবং OpenStreetMap; API key লাগে না।

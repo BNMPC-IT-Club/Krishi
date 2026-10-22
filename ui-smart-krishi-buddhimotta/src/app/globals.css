@@ -80,3 +80,94 @@ h2 { font-size:20px; line-height:1.38; letter-spacing:-.45px; margin-bottom:0; }
 @media (max-width:1100px) { .page-content { padding:32px 32px 50px; }.topbar { padding:0 32px; }.hero-panel { padding:34px 37px; }.hero-orb { width:39%; }.metrics-grid { gap:11px; }.metric-card { padding:16px; }.metric-card strong { font-size:18px; }.chat-layout { grid-template-columns:250px 1fr; }.forecast-grid article { padding-left:4px; padding-right:4px; } }
 @media (max-width:860px) { .sidebar { transform:translateX(-100%); transition:transform .25s ease; box-shadow:18px 0 40px rgba(10,47,34,.12); }.sidebar.sidebar-open { transform:translateX(0); }.content-area { width:100%; margin-left:0; }.hamburger,.close-menu { display:grid; }.close-menu { margin-left:auto; }.mobile-backdrop { display:block; position:fixed; z-index:25; inset:0; background:rgba(8,35,25,.35); border:0; }.topbar { height:65px; padding:0 21px; }.breadcrumb>span:first-child,.live-label { display:none; }.page-content { padding:28px 21px 43px; }.hero-orb { opacity:.7; }.metrics-grid { grid-template-columns:1fr; }.dashboard-grid { grid-template-columns:1fr; }.weather-now { grid-template-columns:1.4fr 1fr 1fr; }.weather-now .weather-main { grid-column:span 3; }.chat-layout { grid-template-columns:1fr; }.chat-context { display:none; }.location-panel { grid-template-columns:1fr; }.map-frame { min-height:245px; }.map-frame iframe { min-height:245px; }.screen-title { align-items:flex-start; flex-direction:column; }.screen-filters { width:100%; }.field-control { flex:1; min-width:0; }.field-control .select-wrap,.field-control select { min-width:0; }.disease-layout { grid-template-columns:1fr; }.market-overview { flex-wrap:wrap; }.market-stat { flex:1; }.advice-crop-symbol { width:100px; height:100px; flex:0 0 100px; }.advice-crop-symbol:before { width:118px; height:118px; }.forecast-grid { overflow:auto; }.forecast-grid article { min-width:99px; }.weather-forecast { overflow:hidden; }.forecast-days { grid-template-columns:repeat(4,1fr); }.forecast-days>div:nth-child(n+5) { display:none; } }
 @media (max-width:570px) { .topbar-actions .profile-button span { display:none; }.topbar-actions { gap:0; }.profile-button { padding:8px; }.page-content { padding:23px 16px 36px; }.topbar { padding:0 14px; }.breadcrumb { font-size:12px; }.screen-title { margin-bottom:20px; }h1 { font-size:27px; }.hero-panel { min-height:335px; padding:27px 22px; }.hero-panel h2 { font-size:30px; }.hero-panel p { font-size:13px; max-width:300px; }.hero-actions { flex-wrap:wrap; gap:5px 15px; }.hero-orb { width:100%; opacity:.34; }.hero-location { display:none; }.metrics-grid { margin:13px 0 22px; }.metric-card { min-height:101px; }.metric-icon { width:38px; height:38px; }.dashboard-grid { gap:13px; }.trend-panel,.shortcuts-panel { padding:19px 16px 13px; }.shortcut-grid { gap:7px; }.shortcut-grid button { min-height:65px; padding:8px; grid-template-columns:18px 1fr; }.shortcut-grid button svg:last-child { display:none; }.screen-filters { display:grid; grid-template-columns:1fr 1fr; }.screen-filters .field-control { width:100%; }.field-control>span { font-size:10px; }.select-wrap { padding-left:8px; }.select-wrap select { padding-left:5px; font-size:12px; }.notice { padding:12px; }.notice p { font-size:12px; }.market-overview { padding:21px; gap:16px; }.market-overview h2 { font-size:22px; }.market-stat { min-width:calc(50% - 8px); padding-left:15px; }.market-stat:last-child { border-left:0; padding-left:0; }.forecast-stats { grid-template-columns:1fr; gap:9px; }.forecast-stats article { padding:14px 16px; }.forecast-chart { padding:19px 12px 14px; }.panel-heading { align-items:flex-start; }.legend { flex-direction:column; align-items:flex-end; gap:3px; }.forecast-days { grid-template-columns:repeat(3,1fr); }.forecast-days>div:nth-child(n+4) { display:none; }.location-panel>div:first-child { padding:23px 21px 20px; }.weather-now { grid-template-columns:1fr 1fr; gap:9px; }.weather-now .weather-main { grid-column:span 2; }.weather-now article { min-height:116px; padding:15px; }.weather-now .weather-main { padding:17px; }.weather-symbol { width:59px; height:59px; flex-basis:59px; }.weather-main strong { font-size:30px; }.weather-now>article:not(.weather-main) strong { font-size:13px; }.weather-forecast { padding:19px 13px; }.weather-advisory { padding:17px; }.upload-card,.diagnosis-card { padding:19px; }.advice-response { padding:17px; }.chat-thread { height:367px; padding:15px; }.chat-head>span { display:none; }.suggestion-row { padding-left:14px; padding-right:14px; }.chat-form { margin-left:14px; margin-right:14px; }.chat-disclaimer { padding-left:14px; padding-right:14px; }.advice-hero { padding:23px 20px; }.advice-hero h2 { font-size:22px; }.advice-crop-symbol { display:none; }.guide-grid { grid-template-columns:1fr; gap:9px; }.guide-grid article { padding:16px; }.help-callout { padding:18px; align-items:flex-start; flex-wrap:wrap; }.help-callout .secondary-button { width:100%; }.chart-caption { font-size:10px; } }
+
+/* Disease assistance, optional AI and safe Markdown rendering. */
+.brand-lockup .brand-copy { min-width:0; }
+.brand-lockup .brand-copy strong { font-family:"Hind Siliguri",sans-serif; font-size:16px; letter-spacing:-.25px; line-height:1.15; }
+.brand-lockup .brand-copy span { max-width:174px; margin-top:4px; font-family:Manrope,"Hind Siliguri",sans-serif; font-size:9px; line-height:1.35; }
+.ai-option-card input { accent-color:#218a63; }
+.disease-scope-notice { margin-bottom:18px; }
+.disease-drop-area { margin-top:22px; border-radius:13px; transition:box-shadow .18s,border-color .18s; }
+.disease-drop-area.drag-over { outline:3px solid rgba(33,138,99,.22); box-shadow:0 0 0 5px rgba(33,138,99,.08); }
+.disease-drop-area .upload-zone { margin-top:0; min-height:243px; padding:18px; text-align:center; }
+.disease-drop-area .upload-zone small { max-width:100%; line-height:1.5; }
+.disease-drop-area .image-preview { height:243px; margin-top:0; }
+.preview-actions { position:absolute; left:10px; right:10px; bottom:10px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.preview-actions span,.preview-actions button { position:static; color:#fff; background:rgba(10,43,31,.82); border:0; border-radius:7px; padding:6px 9px; font-size:10px; }
+.preview-actions span { max-width:calc(100% - 42px); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; display:block; }
+.preview-actions button { width:30px; height:30px; display:grid; place-items:center; padding:0; }
+.capture-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:11px; }
+.secondary-capture { min-height:38px; padding:0 11px; display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid #dce9df; border-radius:9px; background:#f8fcf8; color:#367253; font-size:12px; font-weight:700; }
+.secondary-capture:hover { border-color:#9ac8aa; background:#eef7f0; }
+.analysis-status { display:flex; align-items:center; gap:7px; margin:12px 0 0; color:#2c7958; font-size:12px; font-weight:600; }
+.disease-error { margin-top:12px; display:flex; align-items:flex-start; gap:7px; border:1px solid #f0d3ce; border-radius:9px; padding:10px 12px; color:#a64e43; background:#fff5f2; font-size:12px; line-height:1.5; }
+.disease-error svg { flex:0 0 auto; margin-top:1px; }
+.ai-option-card { display:flex; align-items:flex-start; gap:10px; margin-top:16px; padding:13px; border:1px solid #dfeae1; border-radius:11px; background:#f7fbf7; cursor:pointer; }
+.ai-option-card>input { margin:3px 0 0; flex:0 0 auto; }
+.ai-option-card>span { flex:1; }
+.ai-option-card strong,.ai-option-card small { display:block; }
+.ai-option-card strong { color:#315a46; font-size:12px; }
+.ai-option-card small { margin-top:3px; color:#728279; font-size:10px; line-height:1.5; }
+.ai-option-card>svg { flex:0 0 auto; color:#4c9871; }
+.disease-results { display:grid; gap:14px; margin-top:20px; }
+.result-heading { display:flex; align-items:center; gap:14px; padding:21px 23px; }
+.result-status-icon { width:43px; height:43px; border-radius:13px; display:grid; place-items:center; background:#e4f3e8; color:#21815d; flex:0 0 auto; }
+.result-heading .section-kicker { margin-bottom:3px; }
+.result-heading h2 { font-size:20px; }
+.result-heading h2 span { color:#96a69c; }
+.result-score { margin:4px 0 0; color:#75867c; font-size:11px; }
+.result-caveat { margin:0; }
+.result-card,.top-predictions-card,.product-recommendations,.ai-summary-card,.source-list-card { padding:22px 24px; }
+.result-explanation { margin:15px 0; color:#4d6859; font-size:13px; line-height:1.65; }
+.signs-check { padding:13px 15px; border-left:3px solid #82b695; border-radius:0 9px 9px 0; background:#f4f9f4; }
+.signs-check strong,.result-grid h3 { color:#2e5d45; font-size:12px; }
+.signs-check p,.result-grid p { color:#5b7265; font-size:12px; line-height:1.6; margin:4px 0 0; }
+.result-grid { display:grid; grid-template-columns:1.1fr .9fr; gap:22px; margin-top:19px; }
+.result-grid h3 { margin:0 0 7px; }
+.result-grid ul,.product-card ul { color:#5b7265; font-size:12px; line-height:1.65; margin:0; padding-left:19px; }
+.result-grid li,.product-card li { padding-left:2px; margin:4px 0; }
+.small-caveat { color:#7b8a81; font-size:10px; line-height:1.6; margin:10px 0 0; }
+.model-tag,.verified-tag { color:#478264; background:#eef7ef; border:1px solid #dcecdf; padding:4px 9px; border-radius:18px; font-size:10px; font-weight:700; white-space:nowrap; }
+.prediction-list { display:grid; gap:14px; margin-top:16px; }
+.prediction-item { display:grid; grid-template-columns:26px minmax(0,1fr) 54px; align-items:center; gap:10px; }
+.prediction-rank { width:25px; height:25px; display:grid; place-items:center; border-radius:8px; color:#4c7f61; background:#edf6ee; font-size:11px; font-weight:700; }
+.prediction-name { min-width:0; }
+.prediction-name strong { display:block; overflow:hidden; color:#3a5f49; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.prediction-track { height:5px; overflow:hidden; margin-top:6px; background:#eaf0ea; border-radius:5px; }
+.prediction-track i { height:100%; display:block; border-radius:5px; background:linear-gradient(90deg,#62a97a,#2d815d); }
+.prediction-score { color:#60796a; font-family:Manrope,"Hind Siliguri",sans-serif; font-size:11px; text-align:right; }
+.product-safety-note { color:#536e5d; font-size:12px; line-height:1.65; margin:13px 0; }
+.product-list { display:grid; gap:11px; }
+.product-card { border:1px solid #dfeae1; border-radius:12px; background:#fbfdfb; padding:15px 16px; }
+.product-card-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.product-card h3 { margin:0; color:#234f39; font-size:15px; }
+.product-card-heading div>span { display:block; margin-top:2px; color:#75857b; font-size:10px; }
+.product-card p { color:#536d5c; font-size:11px; line-height:1.6; margin:7px 0; }
+.product-card p strong { color:#365b46; }
+.product-source-link,.source-links a { display:inline-flex; align-items:center; gap:5px; color:#257451; font-size:11px; font-weight:700; text-decoration:none; }
+.product-source-link:hover,.source-links a:hover { text-decoration:underline; }
+.no-product-match { background:#fffdfa; }
+.ai-summary-card { border-color:#dfebdf; background:#fbfefb; }
+.ai-summary-text { margin-top:13px; padding:14px 16px; border:1px solid #e2ece2; border-radius:10px; background:#fff; }
+.source-links { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px 18px; margin-top:14px; }
+.source-links a { min-width:0; justify-content:space-between; padding:9px 10px; border:1px solid #e3ece4; border-radius:8px; background:#fbfdfb; }
+.markdown-content { min-width:0; color:inherit; font-size:inherit; line-height:1.65; overflow-wrap:anywhere; }
+.markdown-content > :first-child { margin-top:0; }
+.markdown-content > :last-child { margin-bottom:0; }
+.markdown-content p { margin:0 0 8px; }
+.markdown-content h1,.markdown-content h2,.markdown-content h3,.markdown-content h4 { margin:8px 0 5px; color:inherit; font-size:1.04em; line-height:1.45; letter-spacing:0; }
+.markdown-content ul,.markdown-content ol { margin:5px 0 10px; padding-left:1.45em; }
+.markdown-content li { margin:3px 0; padding-left:2px; }
+.markdown-content a { color:#23734f; text-decoration:underline; text-underline-offset:2px; }
+.markdown-content blockquote { margin:8px 0; padding:4px 10px; border-left:3px solid #8bb99a; color:#62786a; background:rgba(232,245,237,.6); }
+.markdown-content code { padding:1px 4px; border-radius:4px; background:#edf3ed; font-family:ui-monospace,monospace; font-size:.92em; }
+.markdown-content pre { max-width:100%; overflow:auto; padding:10px; border-radius:8px; background:#edf3ed; }
+.markdown-content pre code { padding:0; }
+.message .message-bubble { min-width:0; margin:0; padding:9px 12px; border-radius:3px 11px 11px 11px; background:#f0f5f1; color:#3a5949; font-size:13px; line-height:1.58; overflow-wrap:anywhere; }
+.message.user .message-bubble { color:#fff; background:#287c5b; border-radius:11px 3px 11px 11px; }
+.message .message-bubble p { margin:0 0 7px; padding:0; background:transparent; color:inherit; font-size:inherit; line-height:inherit; white-space:normal; }
+.message .message-bubble ul,.message .message-bubble ol { margin:4px 0 7px; padding-left:19px; }
+.message .message-bubble li { margin:3px 0; }
+.message.user .markdown-content a { color:#e3f5c2; }
+@media (max-width:860px) { .result-grid { grid-template-columns:1fr; gap:15px; }.source-links { grid-template-columns:1fr; } }
+@media (max-width:570px) { .brand-lockup .brand-copy strong { font-size:15px; }.brand-lockup .brand-copy span { max-width:155px; font-size:8px; }.result-card,.top-predictions-card,.product-recommendations,.ai-summary-card,.source-list-card { padding:18px 17px; }.result-heading { padding:17px; align-items:flex-start; }.result-heading h2 { font-size:17px; }.result-status-icon { width:38px; height:38px; }.product-card { padding:13px; }.capture-actions .secondary-capture { flex:1; padding:0 8px; font-size:11px; }.source-links { gap:7px; } }

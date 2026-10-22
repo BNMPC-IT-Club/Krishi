@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
     }, { status: 503 });
   }
 
-  let body: { image_data_url?: unknown; crop?: unknown; symptom?: unknown };
+  let body: { image_data_url?: unknown; symptom?: unknown; include_ai_explanation?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -28,8 +28,8 @@ export async function POST(request: NextRequest) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         image_data_url: body.image_data_url,
-        crop: typeof body.crop === "string" ? body.crop.slice(0, 100) : "",
         symptom: typeof body.symptom === "string" ? body.symptom.slice(0, 500) : "",
+        include_ai_explanation: body.include_ai_explanation === true,
       }),
       cache: "no-store",
       signal: AbortSignal.timeout(55_000),
