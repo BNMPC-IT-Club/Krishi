@@ -1,84 +1,31 @@
 # Smart Krishi Buddhimotta 🌾
-**স্মার্ট কৃষি বুদ্ধিমত্তা** — বাংলাদেশের কৃষকদের জন্য স্মার্ট কৃষি, ফসলের রোগ শনাক্তকরণ, আবহাওয়া ও বাজারদর সহায়ক প্ল্যাটফর্ম।
 
-A Bengali-first agricultural intelligence web app built with Streamlit. Adapted and improved from the open-source [Agri-Smart-BD](https://github.com/NawrizTurjo/Agri-Smart-BD) project (original code & pretrained model weights belong to their respective authors; see LICENSE).
+বাংলাদেশি কৃষকের জন্য বাংলা-ভিত্তিক কৃষি সহায়তা অ্যাপ। বর্তমান ফ্রন্টএন্ডটি `ui-smart-krishi-buddhimotta/`-র Next.js UI; **ফসল পরামর্শ** গাইডসহ এর নকশা ও মেনু অক্ষুণ্ণ রাখা হয়েছে।
 
----
+## কীভাবে কাজ করে
 
-## ✨ Features that genuinely work
+- **Next.js (Vercel):** UI, Open-Meteo আবহাওয়া API route, OpenStreetMap অবস্থান/মানচিত্র, Telegram webhook, এবং Python API-র server-side proxy।
+- **FastAPI (Render বা অন্য Python host):** Groq বাংলা চ্যাট, রোগের ছবির inference, এবং মূল্য-পূর্বাভাসের prototype endpoint।
+- **রোগের ছবি:** repository-তে থাকা পূর্বপ্রশিক্ষিত ResNet9 ও `plant_disease_weights.pth` ব্যবহৃত হয়—কোনো মডেল retrain করা হয় না। এটি ৩৮টি PlantVillage শ্রেণির মধ্যে সীমিত। Groq-এ ছবিটি পাঠানো হয় না; সারাংশ চাইলে শুধু শ্রেণির ফল ও ব্যবহারকারীর লেখা লক্ষণ যায়।
+- **মূল্য:** `bd_crop_price_data.csv`-র নমুনা দিয়ে backend-এর ১৪ দিনের পরীক্ষামূলক simulation; CSV-র তারিখ ১৮ মে ২০২৫-এ শেষ। ফল **লাইভ, সরকারি বা যাচাইকৃত দাম/পূর্বাভাস নয়**। CSV-তে ফসলের সারি না থাকলে স্পষ্টভাবে demo baseline ব্যবহৃত হয়। বাজারদরের স্ক্রিনেও কেবল prototype data দেখানো হয়।
+- **ফসল পরামর্শ:** বিদ্যমান ২১টি ফসলের স্থানীয় গাইড; বাইরের AI বা database ছাড়াই চলে।
+- **Weather/map:** keyless Open-Meteo forecast এবং OpenStreetMap; API key লাগে না।
+- **Telegram:** `/start` বা `/help`-এ স্বাগতম বার্তা ও deployed app-এর button।
 
-| Section (বাংলা) | What it does | Data source | API key needed? |
-|---|---|---|---|
-| 🏠 স্বাগতম / ড্যাশবোর্ড | Overview, quick stats, navigation | — | No |
-| 💰 আজকের বাজারদর | Live mandi prices from **DAM (kisan bazaar)** reports; graceful error if DAM server is down; manual CSV/Excel upload supported | `market.dam.gov.bd` | No |
-| 📈 ফসলের দাম পূর্বাভাস | 30-day price forecast (existing trained model, historical vs predicted chart) | Bundled **sample** dataset — clearly labelled *"নমুনা ডেটা — বাস্তব দাম নয়"* | No |
-| 🍃 গাছের রোগ শনাক্তকরণ | Upload a leaf photo → PyTorch ResNet9 predicts among **38 PlantVillage classes** with confidence + Bengali advisory | Local pretrained weights (`plant_disease_weights.pth`) | No |
-| 🌦️ আবহাওয়া | Current weather + multi-day forecast for all 64 districts, rain probability, farm-planning reminders | **Open-Meteo.com** (free) | **No** |
-| 🤖 কৃষি সহায়ক AI | Bengali agriculture chat assistant (Llama-3.3-70B) | **Groq API** (free tier) | Yes (free key) |
-| 📲 টেলিগ্রাম অ্যালার্ট | Free weather/market alert push via your own Telegram bot | **Telegram Bot API** (free) | Bot token (free) |
-| ℹ️ প্রকল্প সম্পর্কে | About, data sources, limitations | — | No |
+কোনো PostgreSQL/database লাগবে না। API key বা bot token browser-এ প্রকাশ করবেন না।
 
-### Honest data policy
-- Real market prices are shown **only** when fetched from DAM. When the DAM server is unavailable, the app says so — it never shows fake numbers as real prices.
-- The bundled `bd_crop_price_data.csv` is **derived/sample data**, always labelled as such in the UI. Forecasts based on it are marked *পরীক্ষামূলক* (experimental).
-- Disease model supports only its 38 PlantVillage training classes (apple, corn, potato, tomato etc.). It honestly discloses when your crop may be outside those classes.
+## চালানো ও deploy
 
----
+- Local development, Vercel, Render, Telegram webhook, environment variables এবং free-tier সীমাবদ্ধতার ধাপে-ধাপে নির্দেশনা: **[DEPLOYMENT.md](DEPLOYMENT.md)**।
+- Python API dependency list: `backend/requirements.txt`।
+- Render Blueprint: `render.yaml`।
+- Safe variable-name templates: `backend/.env.example`, `ui-smart-krishi-buddhimotta/.env.example` (এগুলোতে কোনো real secret নেই)।
 
-## 🧠 Model weights (important for deployment)
+## Attribution ও সীমাবদ্ধতা
 
-The trained disease-detection weights (`plant_disease_weights.pth`, ~26 MB) are **not committed to this repo** to stay within GitHub size limits. On first start the app downloads them automatically from the original repo:
+- মূল disease model/ওজন ও কিছু কৃষি সহায়তা উপাদান পূর্ববর্তী [Agri-Smart-BD](https://github.com/NawrizTurjo/Agri-Smart-BD) কাজ থেকে এসেছে; প্রকল্পের `LICENSE` ও মূল notices দেখুন।
+- রোগ মডেলের শ্রেণি PlantVillage training labels-ভিত্তিক; বাংলাদেশের সব ফসল/রোগ অন্তর্ভুক্ত নয়। স্কোর calibrated probability বা নিশ্চিত diagnosis নয়।
+- মূল্য CSV-র নাম/তারিখ বাংলাদেশি live market feed-এর প্রমাণ নয়। বিক্রি, ক্রয় বা চাষের সিদ্ধান্তে স্থানীয় বাজার ও কৃষি কর্মকর্তার তথ্য যাচাই করুন।
+- আবহাওয়া পূর্বাভাস, নিশ্চয়তা নয়।
 
-```
-https://github.com/NawrizTurjo/Agri-Smart-BD/raw/main/plant_disease_weights.pth
-```
-
-and caches them under `.streamlit/cache/`. This works on Streamlit Cloud, Render and locally (internet needed once). If your network blocks it, download that file manually and place it next to `app.py`.
-
-
-## 🚀 Run locally
-
-```bash
-pip install -r requirements.txt
-cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # optional: add keys
-streamlit run app.py
-```
-Open http://localhost:8501 — everything works even without any keys (AI chat & Telegram show a setup hint instead).
-
-## 🔑 Optional keys (both FREE, no credit card)
-
-**Groq AI chat**
-1. Sign up at https://console.groq.com → *API Keys* → create key.
-2. Put it in `.streamlit/secrets.toml`: `GROQ_API_KEY = "gsk_..."`
-
-**Telegram alerts**
-1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token.
-2. Open your bot and send `/start`.
-3. Add to secrets:
-```toml
-[telegram]
-bot_token = "123456:AA..."
-chat_id = ""   # leave empty — the app auto-detects it
-```
-
-⚠️ Never commit `secrets.toml` — it is git-ignored.
-
-## ☁️ Free hosting (Streamlit Community Cloud)
-1. Push this repo to GitHub (weights files included).
-2. Go to https://share.streamlit.io → *New app* → pick your repo, branch, entry point `app.py`.
-3. Under **Settings → Secrets**, paste the contents of `.streamlit/secrets.toml.example` with your real keys.
-4. Deploy. (RAM note: choose the free tier; the model loads once and is cached.)
-
-## 📊 Data sources & attribution
-- **Weather:** [Open-Meteo](https://open-meteo.com/) (free, non-commercial, no key)
-- **Market prices:** Department of Agricultural Marketing (DAM), Bangladesh — `market.dam.gov.bd`
-- **Disease model:** ResNet9 weights trained on [PlantVillage](https://www.kaggle.com/datasets/emmarex/plantdisease) dataset (public research dataset); original implementation by the Agri-Smart-BD author, converted to PyTorch weights kept in this repo.
-- **Sample price data:** derived from public India-agri sample datasets — **not** verified Bangladeshi prices.
-
-## ⚠️ Limitations
-- Forecasts are experimental until genuine Bangladeshi price history is uploaded (use the CSV import).
-- Disease model covers 38 classes only; low-confidence results advise expert confirmation.
-- DAM live fetch depends on their server availability; the app degrades gracefully.
-
-## License
-MIT (see LICENSE). Inherited components retain their original notices.
+MIT License — see [`LICENSE`](LICENSE); inherited components retain their respective attribution.
