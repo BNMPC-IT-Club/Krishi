@@ -1,8 +1,9 @@
 """FastAPI backend for the Next.js Smart Krishi frontend.
 
 The UI stays in ``ui-smart-krishi-buddhimotta``. This API provides Groq chat,
-existing ResNet9 image inference, prototype-price calculations from the bundled
-CSV, and an optional Open-Meteo proxy. It does not retrain any model.
+Qwen multimodal image triage (when configured), the local ResNet9 fallback,
+prototype-price calculations from the bundled CSV, and an optional Open-Meteo
+proxy. It does not retrain any model.
 """
 from __future__ import annotations
 
@@ -32,7 +33,12 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from backend.ai_service import complete, disease_summary
-from backend.disease_guidance import get_disease_guidance
+from backend.disease_guidance import (
+    get_disease_guidance,
+    get_unclassified_visual_guidance,
+    get_visual_disease_guidance,
+)
+from backend.vision_service import DEFAULT_VISION_MODEL, analyze_leaf_image
 from backend.data_mappings import (
     CROP_BN_TO_SAMPLE_EN,
     DEMO_BASE_PRICES,
@@ -244,6 +250,8 @@ def health() -> dict[str, Any]:
         "ok": True,
         "service": "smart-krishi-api",
         "groq_configured": bool(os.getenv("GROQ_API_KEY", "").strip()),
+        "groq_vision_configured": bool(os.getenv("GROQ_API_KEY", "").strip()),
+        "groq_vision_model": os.getenv("GROQ_VISION_MODEL", DEFAULT_VISION_MODEL).strip() or DEFAULT_VISION_MODEL,
         "disease_weights_present": (_REPO_ROOT / "plant_disease_weights.pth").is_file(),
     }
 
@@ -370,6 +378,31 @@ def _display_class(class_label: str) -> tuple[str, str]:
     return crop_names.get(crop_key, crop_key.replace("_", " ")), display
 
 
+def _vision_image_data_url(image: Image.Image) -> str:
+    """Downscale/encode a safe JPEG copy for the optional Groq vision request."""
+    for dimension, quality in ((1280, 84), (1040, 76), (800, 68)):
+        prepared = image.copy()
+        prepared.thumbnail((dimension, dimension), Image.Resampling.LANCZOS)
+        buffer = io.BytesIO()
+        prepared.save(buffer, format="JPEG", quality=quality, optimize=True)
+        encoded = buffer.getvalue()
+        if encoded and len(encoded) <= MAX_IMAGE_BYTES:
+            return "data:image/jpeg;base64," + base64.b64encode(encoded).decode("ascii")
+    raise ValueError("image could not be reduced within the vision request limit")
+
+
+def _cause_label_bn(cause_type: str) -> str:
+    return {
+        "fungal": "সম্ভাব্য ছত্রাকজনিত",
+        "bacterial": "সম্ভাব্য ব্যাকটেরিয়াজনিত",
+        "viral": "সম্ভাব্য ভাইরাসজনিত",
+        "insect_or_mite": "সম্ভাব্য পোকা/মাকড়ের আক্রমণ",
+        "nutrient": "সম্ভাব্য পুষ্টিঘাটতি—নিশ্চিত নয়",
+        "abiotic": "সম্ভাব্য আবহাওয়া/পরিবেশজনিত",
+        "healthy": "স্পষ্ট রোগের লক্ষণ নেই",
+    }.get(cause_type, "কারণ অনিশ্চিত")
+
+
 @app.post("/api/disease")
 def disease(request: DiseaseRequest) -> dict[str, Any]:
     image_bytes = _parse_image_data_url(request.image_data_url)
@@ -379,18 +412,21 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
                 raise HTTPException(status_code=413, detail="ছবির রেজোলিউশন কমিয়ে আবার চেষ্টা করুন।")
             source.verify()
         with Image.open(io.BytesIO(image_bytes)) as source:
-            image = ImageOps.exif_transpose(source).convert("RGB")
-            image = image.resize((256, 256), Image.Resampling.LANCZOS)
+            vision_image = ImageOps.exif_transpose(source).convert("RGB")
+            vision_data_url = _vision_image_data_url(vision_image)
+            classifier_image = vision_image.resize((256, 256), Image.Resampling.LANCZOS)
     except HTTPException:
         raise
     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
         raise HTTPException(status_code=400, detail="ছবিটি পড়া যায়নি। অন্য JPG, PNG বা WebP ছবি দিন।") from None
 
+    top_predictions: list[dict[str, Any]] = []
+    local_model_error: str | None = None
     try:
         import numpy as np
         from disease_model import CLASS_LABELS, predict_torch
         model, torch = _load_disease_model()
-        pixels = np.asarray(image, dtype=np.float32) / 255.0
+        pixels = np.asarray(classifier_image, dtype=np.float32) / 255.0
         tensor = torch.from_numpy(pixels).permute(2, 0, 1).unsqueeze(0)
         probabilities = np.asarray(predict_torch(model, tensor), dtype=np.float64)
         if probabilities.ndim != 1 or len(probabilities) != len(CLASS_LABELS):
@@ -401,54 +437,137 @@ def disease(request: DiseaseRequest) -> dict[str, Any]:
             raise ValueError("model returned no valid scores")
         probabilities = probabilities / probabilities.sum()
         top_indices = np.argsort(probabilities)[::-1][:3]
-        top_predictions = []
         for index in top_indices:
-            crop_label, disease_label = _display_class(CLASS_LABELS[int(index)])
+            label = CLASS_LABELS[int(index)]
+            crop_label, disease_label = _display_class(label)
             top_predictions.append({
-                "class_label": CLASS_LABELS[int(index)],
+                "class_label": label,
                 "crop_label": crop_label,
                 "label": disease_label,
                 "score_percent": round(float(probabilities[int(index)] * 100), 1),
             })
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from None
+    except FileNotFoundError:
+        local_model_error = "weights_missing"
     except Exception:
-        raise HTTPException(
-            status_code=503,
-            detail="বিদ্যমান রোগ মডেলটি লোড বা চালানো যায়নি। পরে আবার চেষ্টা করুন।",
-        ) from None
+        local_model_error = "inference_failed"
 
-    prediction = top_predictions[0]
-    scope_warning = (
-        "এটি আগে থেকে প্রশিক্ষিত ৩৮-শ্রেণির PlantVillage ResNet9 মডেলের একটি অনুমান—"
-        "বাংলাদেশের সব ফসল/রোগ বা যেকোনো পাতার ছবি শনাক্ত করার মডেল নয়। মডেল সবসময় একটি শ্রেণি বেছে নেয়; "
-        "স্কোর calibrated সম্ভাবনা নয়। শীর্ষ বিকল্পগুলো ও বাস্তব লক্ষণ মিলিয়ে দেখুন; শুধু স্কোর দেখে চিকিৎসা শুরু করবেন না।"
+    allowed_classes = list(DISEASE_TRANSLATION.keys())
+    vision = analyze_leaf_image(
+        vision_data_url,
+        top_predictions,
+        allowed_classes,
+        request.symptom,
     )
+    visual_result = vision.get("result") if vision.get("available") else None
+
+    if not top_predictions and not visual_result:
+        if local_model_error == "weights_missing":
+            detail = "রোগ মডেলের ওজন নেই এবং Groq Qwen vision-ও চালু নয়। backend-এ plant_disease_weights.pth বা GROQ_API_KEY যোগ করুন।"
+        elif vision.get("status") == "not_configured":
+            detail = "Groq Qwen vision চালু নেই এবং স্থানীয় রোগ মডেলটিও ব্যবহার করা যাচ্ছে না। backend-এ GROQ_API_KEY ও/অথবা মডেল ওজন যোগ করুন।"
+        else:
+            detail = "ছবি বিশ্লেষণের সেবা এখন সাড়া দিচ্ছে না। পরে আবার চেষ্টা করুন।"
+        raise HTTPException(status_code=503, detail=detail)
+
+    if top_predictions:
+        prediction = top_predictions[0]
+    else:
+        crop_fallback = visual_result.get("crop_bn") or visual_result.get("crop_en") or "ফসল অনিশ্চিত"
+        disease_fallback = visual_result.get("disease_bn") or visual_result.get("disease_en") or "রোগ অনিশ্চিত"
+        prediction = {
+            "class_label": visual_result.get("plantvillage_class_label") or "VISION_ONLY",
+            "crop_label": crop_fallback,
+            "label": disease_fallback,
+            "score_percent": 0.0,
+        }
+
+    if visual_result:
+        if visual_result.get("leaf_status") == "not_leaf":
+            diagnosis_crop = visual_result.get("crop_bn") or visual_result.get("crop_en") or "গাছ শনাক্ত হয়নি"
+            diagnosis_disease = "ছবিতে গাছের পাতা শনাক্ত হয়নি"
+        elif visual_result.get("leaf_status") == "uncertain":
+            diagnosis_crop = visual_result.get("crop_bn") or visual_result.get("crop_en") or "ফসল অনিশ্চিত"
+            diagnosis_disease = visual_result.get("disease_bn") or visual_result.get("disease_en") or "রোগ শনাক্ত অনিশ্চিত"
+        else:
+            diagnosis_crop = visual_result.get("crop_bn") or visual_result.get("crop_en") or "ফসল অনিশ্চিত"
+            if visual_result.get("cause_type") == "healthy":
+                diagnosis_disease = "দেখা ছবিতে স্পষ্ট রোগের লক্ষণ নেই"
+            else:
+                diagnosis_disease = visual_result.get("disease_bn") or visual_result.get("disease_en") or "রোগ শনাক্ত অনিশ্চিত"
+        diagnosis = {
+            "source": "groq_qwen_vision",
+            "leaf_status": visual_result.get("leaf_status", "uncertain"),
+            "crop_label": diagnosis_crop,
+            "disease_label": diagnosis_disease,
+            "cause_type": visual_result.get("cause_type", "unknown"),
+            "cause_label_bn": _cause_label_bn(visual_result.get("cause_type", "unknown")),
+            "visible_signs_bn": visual_result.get("visible_signs_bn", []),
+            "nonchemical_actions_bn": visual_result.get("nonchemical_actions_bn", []),
+            "confidence_band": visual_result.get("confidence_band", "low"),
+        }
+        guidance = get_visual_disease_guidance(visual_result)
+        scope_warning = (
+            "Qwen-এর ছবি-অনুমান নিশ্চিত রোগনির্ণয় নয়—ফসল/রোগ ভুল হতে পারে। "
+            "দৃশ্যমান লক্ষণ ও প্যাকেটের বর্তমান লেবেল মিলিয়ে নিন; DAE পণ্য কেবল নির্দিষ্ট crop–disease record মেললে দেখানো হয়।"
+        )
+    else:
+        diagnosis = {
+            "source": "plantvillage_classifier",
+            "leaf_status": "uncertain",
+            "crop_label": prediction["crop_label"],
+            "disease_label": prediction["label"],
+            "cause_type": "unknown",
+            "cause_label_bn": "কারণ অনিশ্চিত",
+            "visible_signs_bn": [],
+            "nonchemical_actions_bn": [],
+            "confidence_band": "low",
+        }
+        guidance = get_disease_guidance(prediction["class_label"])
+        if guidance["products"]:
+            # Do not turn the less capable, 38-class fallback into a pesticide
+            # recommendation without an independent visual crop/disease result.
+            guidance = get_unclassified_visual_guidance()
+            guidance["product_note"] = (
+                "Qwen Vision পাওয়া যায়নি; স্থানীয় ৩৮-শ্রেণির শ্রেণিবিন্যাস একা ফসল–রোগ নিশ্চিত করার জন্য যথেষ্ট নয়। "
+                "তাই সম্ভাব্য DAE product/rate গোপন রাখা হয়েছে; নতুন ছবি বা স্থানীয় কৃষি কর্মকর্তার মাধ্যমে যাচাই করুন।"
+            )
+        scope_warning = (
+            "Qwen Vision পাওয়া যায়নি; এটি স্থানীয় ৩৮-শ্রেণির PlantVillage মডেলের fallback অনুমান, calibrated সম্ভাবনা নয়। "
+            "বাংলাদেশের সব ফসল/রোগ এতে নেই—শুধু স্কোর দেখে চিকিৎসা শুরু করবেন না।"
+        )
 
     answer = None
     model_name = None
     ai_error = None
     if request.include_ai_explanation:
         answer, model_name, ai_error = disease_summary(
-            prediction["crop_label"], prediction["label"], prediction["score_percent"],
+            diagnosis["crop_label"], diagnosis["disease_label"], prediction["score_percent"],
             top_predictions, request.symptom,
+            visual_assessment=visual_result,
         )
 
     return {
         "prediction": prediction,
+        "diagnosis": diagnosis,
         "top_predictions": top_predictions,
         "scope_warning": scope_warning,
-        "guidance": get_disease_guidance(prediction["class_label"]),
+        "guidance": guidance,
+        "vision_analysis": {
+            "available": bool(visual_result),
+            "status": vision.get("status", "provider_unavailable"),
+            "model": vision.get("model"),
+        },
+        "local_model_available": bool(top_predictions),
+        "image_sent_to_groq": bool(vision.get("image_sent_to_groq")),
         "summary": answer,
         "summary_model": model_name,
         "summary_requested": request.include_ai_explanation,
         "summary_available": answer is not None,
         "summary_error_code": ai_error,
-        "image_sent_to_groq": False,
         "model_scope": {
-            "name": "ResNet9 / PlantVillage",
+            "name": "Groq Qwen vision + ResNet9 / PlantVillage fallback",
             "class_count": 38,
             "all_bangladesh_crops_supported": False,
         },
-        "data_kind": "existing_pretrained_model_with_curated_guidance",
+        "data_kind": "multimodal_visual_estimate_with_local_dae_allow_list",
     }

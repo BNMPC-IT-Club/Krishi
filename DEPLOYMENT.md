@@ -7,7 +7,7 @@ This repository is split into two deployables. The Next.js UI stays in `ui-smart
 - GitHub access to this repository.
 - A Vercel account for the frontend.
 - A Render account (or another Python 3.11 host) for the API.
-- A Groq API key only if you want chat and AI-generated disease summaries. Create it in Groq Console and store it only in Render environment variables.
+- A Groq API key for multimodal disease-photo analysis and chat/optional explanations. Disease photos are transmitted to Groq when this key is configured; the app shows this before upload. Store the key only in Render environment variables. Without a key, the local 38-class model is used as a limited, non-prescriptive fallback.
 - A Telegram bot token only if you want the optional bot welcome link. Create it with `@BotFather`; do not paste it into source code or chat.
 - Node.js 22 for local frontend development; Python 3.11 for the API.
 
@@ -18,7 +18,8 @@ There is **no database setup** and no `DATABASE_URL` requirement.
 1. In Render, choose **New → Blueprint** and connect this repository. Keep the repository root as the Blueprint/root directory so `render.yaml`, `backend/`, `disease_model.py`, the CSV, and the tracked model checkpoint are all available.
 2. Render reads [`render.yaml`](render.yaml). It installs `backend/requirements.txt`, starts `uvicorn backend.main:app`, and checks `/health`. The included plan is `free`; you can change it to a paid plan if you need faster cold starts, more memory, or a continuously available service.
 3. In the new service's **Environment** tab, add:
-   - `GROQ_API_KEY` — optional; required for Groq chat and AI disease summaries. Keep it in Render only.
+   - `GROQ_API_KEY` — required for Qwen vision, chat, and optional text explanations. Keep it in Render only; never use a `NEXT_PUBLIC_` variable.
+   - `GROQ_VISION_MODEL` — optional; defaults to `qwen/qwen3.8-27b`. Set only to a vision-capable model available to your Groq account.
    - `FRONTEND_URL` — your Vercel production URL, e.g. `https://your-app.vercel.app` (no trailing slash). This is used for CORS if the API is called directly; the normal UI path is a server-side proxy.
 4. Wait for the deploy to finish. Open `https://YOUR-SERVICE.onrender.com/health`. A healthy response includes `"ok": true` and `"disease_weights_present": true`.
 5. Copy the Render service's base URL. You will enter it in Vercel as `BACKEND_URL`, with no trailing slash.
@@ -98,7 +99,8 @@ python3.11 -m venv .venv
 source .venv/bin/activate        # Windows PowerShell: .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r backend/requirements.txt
-export GROQ_API_KEY='your-private-key'  # optional; omit to use fallback disease advice
+export GROQ_API_KEY='your-private-key'  # enables Groq Qwen vision/chat; omit for local 38-class disease fallback
+export GROQ_VISION_MODEL='qwen/qwen3.8-27b'  # optional; this is the default
 export FRONTEND_URL='http://localhost:3000'
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -132,8 +134,9 @@ Open `http://localhost:3000`. The local weather route uses Open-Meteo; crop guid
 
 - `bd_crop_price_data.csv` is inherited sample/derived data with records dated **2024-03-21 to 2025-05-18**. It is not a current official Bangladesh market feed. The forecast endpoint uses it as a baseline and generates a deterministic 14-day **simulation dated around today**. The generated history is not an observed current-price series, and the forecast has not been validated. Crops without CSV rows use a labelled synthetic demo baseline.
 - The market table contains demo values. Do not use either screen to decide a real sale, purchase, or planting schedule.
-- The existing ResNet9 predicts among 38 PlantVillage classes only. It does not cover all local crops or diseases; its score is not a calibrated probability. The response explicitly warns when a selected local crop is outside the model's crop classes. Seek confirmation from a local agriculture officer.
-- Disease photos are compressed in the browser and sent to the Python API for inference. The photo is **not** sent to Groq; only top model labels/scores and the user's typed symptoms are sent for an optional text summary.
+- The existing ResNet9 predicts among 38 PlantVillage classes only. It does not cover all local crops or diseases; its score is not a calibrated probability. Qwen vision is an additional visual estimate, not a validated field diagnosis. Seek confirmation from a local agriculture officer.
+- Disease photos are compressed in the browser, forwarded by the Python API, and sent to Groq Qwen Vision whenever `GROQ_API_KEY` is configured. The diagnosis screen discloses this before upload. The app does not persist photos, but Groq handles the request under its own service terms; avoid personal or identifying images. If the key/model is not configured or the provider fails, the local classifier is used as a limited fallback.
+- Longer AI explanation is opt-in and uses a separate text-only Groq call with the short visual result and typed symptoms, not the image pixels. Product/rate/application data remains a server-side DAE PPW allow-list; the vision model cannot write prescriptions. No exact local crop–disease record means no product/dose is shown.
 - Weather comes from Open-Meteo; forecasts may be wrong. Map tiles are from OpenStreetMap. Respect those services' current terms and attribution.
 
 ## 7. Free-tier availability: important

@@ -1,7 +1,8 @@
-"""Groq-only text service used by chat and disease-summary routes.
+"""Groq text service used by chat and optional disease explanations.
 
-The image is never sent to Groq. Disease summaries receive only the model's
-class scores plus any short symptom text the user entered.
+Image analysis is implemented separately in ``vision_service.py``. This module
+only sends text to Groq; an optional disease explanation receives the short,
+validated vision result plus any symptom text, never image pixels.
 """
 from __future__ import annotations
 
@@ -182,21 +183,42 @@ def disease_summary(
     score_percent: float,
     alternatives: list[dict[str, Any]],
     symptom: str,
+    visual_assessment: dict[str, Any] | None = None,
 ) -> tuple[str | None, str | None, str | None]:
-    """Ask Groq for cautious text based on classification labels, never the image."""
+    """Ask Groq for cautious text; the text model receives findings, not pixels."""
     scores = "; ".join(
         f"{item.get('label', 'অজানা')}: {float(item.get('score_percent', 0)):.1f}%"
         for item in alternatives[:3]
     )
+    if visual_assessment:
+        vision_context = (
+            "ছবিটি আলাদা Qwen vision model দেখেছে; তুমি ছবির pixel দেখছ না। "
+            f"তার সংক্ষিপ্ত ফল: crop={visual_assessment.get('crop_bn') or visual_assessment.get('crop_en') or 'অনিশ্চিত'}; "
+            f"disease={visual_assessment.get('disease_bn') or visual_assessment.get('disease_en') or 'অনিশ্চিত'}; "
+            f"cause_type={visual_assessment.get('cause_type') or 'unknown'}; "
+            f"visible signs={'; '.join(visual_assessment.get('visible_signs_bn') or []) or 'not stated'}. "
+        )
+        if alternatives:
+            local = alternatives[0]
+            model_context = (
+                " স্থানীয় শ্রেণিবিন্যাসের সহায়ক অনুমান: "
+                f"{local.get('crop_label', crop_label)} — {local.get('label', disease_label)} "
+                f"({float(local.get('score_percent', score_percent)):.1f}%; calibrated নয়)।"
+            )
+        else:
+            model_context = ""
+    else:
+        vision_context = "কোনো multimodal vision ফল নেই; তুমি ছবিটি দেখোনি। "
+        model_context = (
+            f"ছবির শ্রেণিবিন্যাস মডেলের fallback অনুমান: {crop_label} — {disease_label}; "
+            f"স্কোর {score_percent:.1f}% (calibrated নয়); শীর্ষ বিকল্প {scores or 'নেই'}।"
+        )
     user_text = (
-        f"বিদ্যমান ছবির শ্রেণিবিন্যাস মডেলের ফল: ফসলের অনুমান {crop_label}; "
-        f"সর্বোচ্চ শ্রেণি {disease_label}; মডেল স্কোর {score_percent:.1f}%; "
-        f"শীর্ষ বিকল্প: {scores or 'নেই'}। ব্যবহারকারীর লেখা লক্ষণ: "
+        f"{vision_context}{model_context} ব্যবহারকারীর লেখা লক্ষণ: "
         f"{symptom.strip()[:500] or 'কোনো লক্ষণ লেখা হয়নি'}। "
-        "এটি নিশ্চিত রোগনির্ণয় নয় এবং তুমি ছবিটি দেখোনি। বাংলায় Markdown-এ ২–৩টি সতর্ক "
-        "যাচাই/পরবর্তী পদক্ষেপ দাও; একটি ছোট bullet list ব্যবহার করতে পারো। নির্দিষ্ট "
-        "কীটনাশক, ব্র্যান্ড, ওষুধ, মিশ্রণ, মাত্রা বা পানির পরিমাণ বলবে না; সেগুলোর জন্য "
-        "অ্যাপে দেখানো DAE-যাচাইকৃত লেবেল-তথ্যই আলাদা। স্কোরকে calibrated probability বা "
-        "নির্ভুলতা বলে উপস্থাপন করবে না।"
+        "বাংলায় Markdown-এ ২–৩টি সংক্ষিপ্ত ব্যাখ্যা/যাচাইয়ের ধাপ দাও। এটিকে নিশ্চিত "
+        "রোগনির্ণয় বলবে না। নির্দিষ্ট কীটনাশক, ব্র্যান্ড, ওষুধ, সার, মিশ্রণ, মাত্রা, "
+        "প্রয়োগপথ বা পানির পরিমাণ বলবে না; কেবল অ্যাপের আলাদা DAE-যাচাইকৃত লেবেল-তথ্য "
+        "ব্যবহারযোগ্য। স্কোরকে calibrated probability বা নির্ভুলতা বলে উপস্থাপন করবে না।"
     )
     return complete([{"role": "user", "content": user_text}], max_tokens=420)
