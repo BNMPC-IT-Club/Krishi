@@ -23,7 +23,7 @@
 
 ## Attribution ও সীমাবদ্ধতা
 
-- মূল disease model/ওজন ও কিছু কৃষি সহায়তা উপাদান পূর্ববর্তী [Agri-Smart-BD](https://github.com/NawrizTurjo/Agri-Smart-BD) কাজ থেকে এসেছে; প্রকল্পের `LICENSE` ও মূল notices দেখুন।
+- মূল disease model/ওজন ও কিছু কৃষি সহায়তা উপাদান পূর্ববর্তী কাজ থেকে এসেছে; প্রকল্পের `LICENSE` ও মূল notices দেখুন।
 - রোগ মডেলের শ্রেণি PlantVillage training labels-ভিত্তিক; বাংলাদেশের সব ফসল/রোগ অন্তর্ভুক্ত নয়। স্কোর calibrated probability বা নিশ্চিত diagnosis নয়।
 - মূল্য CSV-র নাম/তারিখ বাংলাদেশি live market feed-এর প্রমাণ নয়। বিক্রি, ক্রয় বা চাষের সিদ্ধান্তে স্থানীয় বাজার ও কৃষি কর্মকর্তার তথ্য যাচাই করুন।
 - আবহাওয়া পূর্বাভাস, নিশ্চয়তা নয়।
